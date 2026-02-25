@@ -103,7 +103,7 @@ Timecoded shot descriptions for Discovery Channel tape compilations:
 - **Tape number → file mapping**: Tape numbers correspond to files on `/o/` at paths like:
   `/o/master 1/Tape 508 - Self Contained.mov`
 
-### Spot Check Results (marker-pdf v1.10.2, RTX 4090)
+### Spot Check Results (marker-pdf v1.10.1, RTX 4090)
 
 | PDF     | Type            | Size    | Processing Time | Quality                                                                                                                                 |
 | ------- | --------------- | ------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
@@ -113,7 +113,79 @@ Timecoded shot descriptions for Discovery Channel tape compilations:
 
 **Conclusion**: marker-pdf with `force_ocr` mode handles the typed shot lists well. Handwritten documents will need post-processing or LLM assistance for accuracy improvement.
 
-**Multimodal LLM Backup**: For PDFs where marker-pdf produces poor results (especially handwritten documents), the pipeline supports a fallback path through a multimodal LLM (e.g., Qwen2-VL, InternVL, or similar vision-language model that fits on RTX 4090). The LLM receives the scanned page image directly and extracts structured shot list data via prompted generation. This is slower and more GPU-intensive but handles degraded/handwritten documents much better than traditional OCR.
+### Alternative Approach Evaluation (Feb 2025)
+
+**Script**: `scripts/0b_compare_ocr_approaches.py`
+
+Tested four approaches on the same 3 PDFs:
+
+| Approach                       | Method                                   | FR-0001 Time | Text Accuracy                                                       | Notes                                                                                                                                                                                                           |
+| ------------------------------ | ---------------------------------------- | ------------ | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A. marker baseline**         | marker `force_ocr`                       | 22.6s        | **Accurate** — real text captured, noisy table formatting           | Current approach. All footage numbers, camera angles, descriptions present (correctly reads "Mercury Capsule", "Hanger S")                                                                                      |
+| **B. marker + LLM**            | marker `force_ocr` + Ollama `gemma3:12b` | 40.9s        | **Mixed** — cleaner formatting but DROPPED shot entries (data loss) | 2× slower; LLM "cleaned" the table by removing rows it deemed noisy. Unreliable for production.                                                                                                                 |
+| **C. Direct VLM (gemma3:12b)** | Page images → Ollama gemma3:12b → JSON   | 22.9s        | **HALLUCINATED** — fabricated content entirely                      | FR-0001 described as "Apollo 11 Lunar Module" (actual: Mercury Capsule). FR-2041 described as "Apollo 11 Lunar Surface Ops" (actual: Saturn table models). Completely wrong FR numbers, subjects, descriptions. |
+| **C. Direct VLM (llava:7b)**   | Page images → Ollama llava:7b → JSON     | 33.2s        | **Failed** — echoed field names from prompt as template             | Too small a model; no actual content extraction                                                                                                                                                                 |
+
+#### Key Findings
+
+1. **marker baseline wins on accuracy**: Despite noisy markdown table output, marker correctly captures the actual text from the scanned documents. The OCR (Surya) reads "Mercury Capsule", "Technicians guiding", footage numbers (13, 21, 32, 47...) etc. faithfully from the typed originals.
+
+2. **Local VLMs hallucinate badly on these documents**: Both gemma3:12b and llava:7b fabricate plausible-sounding but completely wrong content when given page images. This is a known problem with smaller VLMs on degraded/historical documents — they "fill in" what they expect rather than reading what's actually there. These models are **not reliable for extraction** from 1960s typewritten scans.
+
+3. **marker + LLM mode is counterproductive for this use case**: The LLM "improves" formatting by removing rows it considers noisy, causing data loss. The 2× slowdown (40.9s vs 22.6s per PDF, → ~88 hours total) makes this impractical at scale.
+
+4. **Handwritten documents remain unsolved locally**: Neither marker nor any tested local VLM produces usable output for FR-1902 (handwritten scene log). A capable cloud VLM (Gemini, Claude) or a larger local model (Qwen2.5-VL-72B via vLLM with quantization) would be needed.
+
+#### Other Tools Evaluated (Not Tested)
+
+| Tool                     | Stars | Relevance                                     | Why Not Selected                                                                                                   |
+| ------------------------ | ----- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **Docling** (IBM)        | 54k   | PDF→markdown, VLM support, MIT license        | Good alternative but no evidence of better OCR on degraded historical docs; GraniteDocling VLM is only 258M params |
+| **MinerU** (OpenDataLab) | 55k   | PDF→markdown/JSON, hybrid VLM+pipeline        | Requires 10GB+ VRAM for VLM mode; uses PaddleOCR under the hood; AGPL license                                      |
+| **PaddleOCR**            | 71k   | Industry OCR toolkit, 111 languages, VL model | PaddleOCR-VL (0.9B) is promising but requires PaddlePaddle framework (separate from PyTorch ecosystem)             |
+| **docTR** (Mindee)       | 5.9k  | PyTorch OCR with detection+recognition        | Scene text focused; no table structure understanding                                                               |
+| **Tesseract**            | —     | Classic OCR engine                            | Fast but no layout/table understanding; same accuracy tier as Surya for typed content                              |
+
+#### Decision: Keep marker-pdf for Stage 1
+
+**marker-pdf with `force_ocr` is the right choice for Stage 1.** Rationale:
+
+- **Accurate raw OCR** on typed documents (the vast majority of the 10,590 PDFs)
+- **Already installed and tested** — no new dependencies or framework conflicts
+- **15s/PDF average** is acceptable (44 hrs single-worker, reducible with `--workers`)
+- The noisy table formatting is a Stage 2 problem (LLM-based parsing), not a Stage 1 problem
+- Surya OCR supports finetuning if accuracy needs improvement on specific document types (see `surya/scripts/finetune_ocr.py`)
+
+**For handwritten documents**: defer to Stage 2 — flag PDFs where marker output is low-confidence or low-character-count, then re-process those through a cloud VLM API (Gemini Flash is fast/cheap) or a better local model if one becomes available. Do NOT use local VLMs (gemma3, llava) for this — they hallucinate.
+
+#### Chunked LLM Post-Processing (Tested Feb 2025)
+
+**Script**: `scripts/0b_compare_ocr_approaches.py`
+
+The original marker + LLM test (approach B) dropped whole shot entries because the LLM processed the full page at once and "cleaned" away rows. We tested sending the raw marker OCR output to an LLM in **small chunks** (3, 5, or 10 table rows at a time) to prevent this.
+
+**Models tested**: gemma3:12b (8.1 GB), qwen3:14b (9.3 GB), gemma3:27b (17 GB)
+
+| PDF         | Approach               | Time   | Recall  | Notes                                                                  |
+| ----------- | ---------------------- | ------ | ------- | ---------------------------------------------------------------------- |
+| FR-0001     | baseline marker        | 29s    | 93.8%   | Missed footage 70 (OCR noise)                                         |
+| FR-0001     | gemma3:12b chunk3      | 21s    | **100%**| Recovered all 16 shots — best result                                   |
+| FR-0001     | gemma3:12b chunk10     | 10s    | **100%**| Same recall, faster                                                    |
+| FR-0001     | gemma3:27b chunk10     | 99s    | **100%**| Too slow — spills to CPU on Windows (24GB VRAM needed)                 |
+| FR-0001     | qwen3:14b             | >4min  | —       | Chain-of-thought overhead made it impractically slow                    |
+| FR-2041     | baseline marker        | 53s    | 80.0%   | Missed 4 footages: OCR read `5t)` as 5, `1.64` as 1, `T80` as 1      |
+| FR-2041     | gemma3:12b chunk10     | 37s    | 85.0%   | Only +1 recovered; OCR *number* errors can't be fixed from text alone  |
+| FR-2041     | gemma3:12b chunk3      | 45s    | 70.0%   | Worse — smaller chunks lost context, introduced false positives        |
+
+**Conclusions**:
+
+1. **Chunked LLM helps on clean typed documents** (FR-0001: 93.8% → 100%) where the text is correct but formatting is messy. The LLM successfully merges split columns and removes noise without dropping rows.
+
+2. **Chunked LLM does NOT fix OCR number errors** (FR-2041: 80% → 85%). When Surya misreads `50` as `5t)` or `180` as `T80`, the LLM has no way to know the correct number from a 10-row text chunk alone. These errors are better handled in Stage 2 where the LLM can use sequential footage patterns and document structure as context.
+
+3. **gemma3:12b is the only viable local model**: gemma3:27b spills to CPU on Windows (RTX 4090 has 24GB but Windows reserves ~6GB). qwen3:14b uses chain-of-thought reasoning that adds massive latency for a simple text-cleanup task.
+
+4. **Not worth adding to Stage 1**: The marginal accuracy gain (+5% on average) doesn't justify doubling the processing time (10,590 PDFs × ~30s extra ≈ 88 additional hours). The baseline marker output is faithful to the source — the noisy formatting and OCR number errors are better resolved in Stage 2 LLM parsing where the full document context is available.
 
 ---
 
@@ -144,22 +216,25 @@ Batch-process all 10,590 FR shot list PDFs through marker-pdf:
 
 **Script**: `scripts/1b_ingest_excel.py`
 
-Parse all 5 tabs of `input_indexes/ApolloReelsMaster.xlsx` into normalized JSON:
+Parse all 5 tabs of `input_indexes/ApolloReelsMaster.xlsx` into a **SQLite database**. The source Excel is 24 MB and has 43,271+ rows — JSON would inflate this significantly due to repeated key names on every row. SQLite keeps the interim data compact (~5–10 MB expected), queryable, and zero-infrastructure:
 
-- **Master List** (43,271 rows): Extract FR identifiers, titles, dates, video file references, descriptions. This is the backbone index — every FR number in the catalog should appear here.
-- **MOCR** (189 rows): Apollo MOCR activity records. Cross-reference by FR identifier.
-- **HD** (632 rows): HD transfer records with tape numbers and cuts. Cross-reference by identifier.
-- **17** (1,006 rows): Apollo 17 detailed index with AK-XXX identifiers and filenames.
-- **DiscoveryShotList** (965 rows): Timecoded shot descriptions for 291 Discovery tapes. Parse the Shotlist text field to extract individual timecoded entries. Map tape numbers to video files on `/o/` (e.g., Tape 508 → `/o/master 1/Tape 508 - Self Contained.mov`).
+- **master_list** table (43,271 rows): FR identifiers, titles, dates, video file references, descriptions. This is the backbone index — every FR number in the catalog should appear here.
+- **mocr** table (189 rows): Apollo MOCR activity records. Cross-reference by FR identifier.
+- **hd_transfers** table (632 rows): HD transfer records with tape numbers and cuts. Cross-reference by identifier.
+- **apollo17** table (1,006 rows): Apollo 17 detailed index with AK-XXX identifiers and filenames.
+- **discovery_shotlist** table (965 rows): Timecoded shot descriptions for 291 Discovery tapes. Parse the Shotlist text field to extract individual timecoded entries. Map tape numbers to video files on `/o/` (e.g., Tape 508 → `/o/master 1/Tape 508 - Self Contained.mov`).
+- **tape_to_file_map** table: Discovery tape number → file path mapping (derived).
+- **\_manifest** table: processing metadata and timestamp.
 
-- Output: `data/01b_excel_parsed/`
-  - `master_list.json` — all 43,271 reel records
-  - `mocr.json` — MOCR activity records
-  - `hd_transfers.json` — HD transfer records
-  - `apollo17.json` — Apollo 17 detailed index
-  - `discovery_shotlist.json` — parsed timecoded shot descriptions
-  - `tape_to_file_map.json` — Discovery tape number → file path mapping
-  - `_manifest.json` — processing metadata and timestamp
+- Output: `data/01b_excel.db` (single SQLite file)
+
+Why SQLite over JSON for this stage:
+
+- **Size**: ~5–10 MB vs. ~50–80 MB as JSON (key names repeated 43K times)
+- **Queryable**: downstream stages can `SELECT` only the columns/rows they need instead of loading everything into memory
+- **Atomic writes**: no partial-write corruption risk across multiple files
+- **Still portable**: single file, no server, `sqlite3` available everywhere
+- JSON remains the output format for the final catalog (Stage 5+) where per-reel files are small and browser-loadable
 
 ### Stage 2: Parse & Normalize Shot List Data
 
@@ -498,6 +573,7 @@ Every stage is designed to be re-runnable and incremental:
 | PDF OCR               | **marker-pdf** (v1.10.2)                     | OCR scanned shotlist PDFs → structured text |
 | PDF backup (LLM)      | **Qwen2-VL** / **InternVL** (TBD)            | Multimodal LLM fallback for difficult PDFs  |
 | Excel ingestion       | **openpyxl**                                 | Parse ApolloReelsMaster.xlsx spreadsheet    |
+| Interim data store    | **sqlite3** (stdlib)                         | Compact queryable storage for parsed Excel  |
 | Deep learning         | **PyTorch** (cu126)                          | GPU inference backbone                      |
 | Scene detection       | **PySceneDetect** / custom                   | Shot boundary detection in video            |
 | Video processing      | **ffmpeg** / **ffprobe**                     | Video metadata, keyframe extraction         |
@@ -517,10 +593,7 @@ data/
 │   ├── FR-0001.json
 │   ├── FR-0001.md
 │   └── _manifest.json
-├── 01b_excel_parsed/         # Parsed Excel spreadsheet data
-│   ├── master_list.json
-│   ├── discovery_shotlist.json
-│   └── tape_to_file_map.json
+├── 01b_excel.db                # Parsed Excel data (SQLite)
 ├── 02_shotlists_parsed/      # Normalized shot list records
 │   ├── FR-0001.json
 │   └── _manifest.json
