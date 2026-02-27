@@ -1,4 +1,7 @@
-# Data directory - all catalog JSON, intermediate files
+node_modules/
+.local/
+
+ Data directory - all catalog JSON, intermediate files
 data/
 input_indexes/
 
@@ -16,6 +19,9 @@ build/
 
 # uv
 uv.lock
+
+# Environment — local overrides (see .env.example for template)
+.env
 
 # IDE
 .vscode/
