@@ -166,16 +166,16 @@ The original marker + LLM test (approach B) dropped whole shot entries because t
 
 **Models tested**: gemma3:12b (8.1 GB), qwen3:14b (9.3 GB), gemma3:27b (17 GB)
 
-| PDF         | Approach               | Time   | Recall  | Notes                                                                  |
-| ----------- | ---------------------- | ------ | ------- | ---------------------------------------------------------------------- |
-| FR-0001     | baseline marker        | 29s    | 93.8%   | Missed footage 70 (OCR noise)                                         |
-| FR-0001     | gemma3:12b chunk3      | 21s    | **100%**| Recovered all 16 shots — best result                                   |
-| FR-0001     | gemma3:12b chunk10     | 10s    | **100%**| Same recall, faster                                                    |
-| FR-0001     | gemma3:27b chunk10     | 99s    | **100%**| Too slow — spills to CPU on Windows (24GB VRAM needed)                 |
-| FR-0001     | qwen3:14b             | >4min  | —       | Chain-of-thought overhead made it impractically slow                    |
-| FR-2041     | baseline marker        | 53s    | 80.0%   | Missed 4 footages: OCR read `5t)` as 5, `1.64` as 1, `T80` as 1      |
-| FR-2041     | gemma3:12b chunk10     | 37s    | 85.0%   | Only +1 recovered; OCR *number* errors can't be fixed from text alone  |
-| FR-2041     | gemma3:12b chunk3      | 45s    | 70.0%   | Worse — smaller chunks lost context, introduced false positives        |
+| PDF     | Approach           | Time  | Recall   | Notes                                                                 |
+| ------- | ------------------ | ----- | -------- | --------------------------------------------------------------------- |
+| FR-0001 | baseline marker    | 29s   | 93.8%    | Missed footage 70 (OCR noise)                                         |
+| FR-0001 | gemma3:12b chunk3  | 21s   | **100%** | Recovered all 16 shots — best result                                  |
+| FR-0001 | gemma3:12b chunk10 | 10s   | **100%** | Same recall, faster                                                   |
+| FR-0001 | gemma3:27b chunk10 | 99s   | **100%** | Too slow — spills to CPU on Windows (24GB VRAM needed)                |
+| FR-0001 | qwen3:14b          | >4min | —        | Chain-of-thought overhead made it impractically slow                  |
+| FR-2041 | baseline marker    | 53s   | 80.0%    | Missed 4 footages: OCR read `5t)` as 5, `1.64` as 1, `T80` as 1       |
+| FR-2041 | gemma3:12b chunk10 | 37s   | 85.0%    | Only +1 recovered; OCR _number_ errors can't be fixed from text alone |
+| FR-2041 | gemma3:12b chunk3  | 45s   | 70.0%    | Worse — smaller chunks lost context, introduced false positives       |
 
 **Conclusions**:
 
@@ -218,23 +218,55 @@ Batch-process all 10,590 FR shot list PDFs through marker-pdf:
 
 Parse all 5 tabs of `input_indexes/ApolloReelsMaster.xlsx` into a **SQLite database**. The source Excel is 24 MB and has 43,271+ rows — JSON would inflate this significantly due to repeated key names on every row. SQLite keeps the interim data compact (~5–10 MB expected), queryable, and zero-infrastructure:
 
-- **master_list** table (43,271 rows): FR identifiers, titles, dates, video file references, descriptions. This is the backbone index — every FR number in the catalog should appear here.
-- **mocr** table (189 rows): Apollo MOCR activity records. Cross-reference by FR identifier.
-- **hd_transfers** table (632 rows): HD transfer records with tape numbers and cuts. Cross-reference by identifier.
-- **apollo17** table (1,006 rows): Apollo 17 detailed index with AK-XXX identifiers and filenames.
-- **discovery_shotlist** table (965 rows): Timecoded shot descriptions for 291 Discovery tapes. Parse the Shotlist text field to extract individual timecoded entries. Map tape numbers to video files on `/o/` (e.g., Tape 508 → `/o/master 1/Tape 508 - Self Contained.mov`).
-- **tape_to_file_map** table: Discovery tape number → file path mapping (derived).
+- **film_rolls** table (43,269 rows): Content definition — identifier, title, date, feet, minutes, audio, description, mission. Enriched by MOCR (cleaner titles, feet/minutes/audio) and Apollo 17 (titles, descriptions, feet/minutes/audio) content metadata. Includes `has_shotlist_pdf` flag (set during ingest by matching against PDFs on disk) and `has_transfer_on_disk` flag (set later by Stage 1c directory crawl).
+- **transfers** table (~12,687 rows): Known physical/digital instances of each film roll — LTO copies, HD dubs, Discovery tape captures, VRDS refs, digital files. Includes `creator` and `prime_data_tape` for Apollo 17 transfers.
+- **discovery_shotlist** / **discovery_timecodes** tables: Timecoded shot descriptions for compilation tapes.
 - **\_manifest** table: processing metadata and timestamp.
 
 - Output: `data/01b_excel.db` (single SQLite file)
 
 Why SQLite over JSON for this stage:
 
-- **Size**: ~5–10 MB vs. ~50–80 MB as JSON (key names repeated 43K times)
+- **Size**: ~12 MB vs. ~50–80 MB as JSON (key names repeated 43K times)
 - **Queryable**: downstream stages can `SELECT` only the columns/rows they need instead of loading everything into memory
 - **Atomic writes**: no partial-write corruption risk across multiple files
 - **Still portable**: single file, no server, `sqlite3` available everywhere
 - JSON remains the output format for the final catalog (Stage 5+) where per-reel files are small and browser-loadable
+
+### Stage 1c: Directory Crawl & Transfer Verification
+
+**Script**: `scripts/1c_verify_transfers.py` (not yet written)
+
+Scan `/o/` (READ-ONLY) to build a filename inventory across all folder structures, then match filenames back to film_roll identifiers to set `has_transfer_on_disk = 1`.
+
+> **⚠️ CRITICAL: The `/o/` network share is STRICTLY READ-ONLY.**
+> Only read operations (directory listing, stat) are permitted.
+
+This is the bridge between "the spreadsheet says a transfer exists" and "we can confirm the file is actually on disk".
+
+#### Matching challenges
+
+Filename-to-identifier matching is non-trivial because naming conventions vary across folder structures:
+
+- **Master Tapes** (`/o/Master 1-4/`): Named by tape number (`Tape 508 - Self Contained.mov`), not by film roll identifier. One tape file contains many film rolls. Must cross-reference via `transfers.tape_number` and the naming convention (tapes 501–562 = Master 1, 563–625 = Master 2, 626–712 = Master 3, 713–886 = Master 4).
+- **MPEG-2 proxies** (`/o/MPEG-2/`): Some have embedded FR numbers (`L000881_FR-0001.mpg`), others are tape-level only (`L000881.mpg`). Must parse L-number and match via `transfers.lto_number`.
+- **Stephen_2025** (`/o/Stephen_2025/`): Named with `255-S-NNNN` pattern. Must match against film_rolls identifiers or develop a new mapping.
+- **Master 5** (`/o/Master 5/`): 14,980 files in Apollo mission subdirectories. Naming patterns vary widely — will need heuristic matching.
+
+#### Approach
+
+1. Walk all directories on `/o/`, collect `(path, filename, size_bytes, mtime)` into a `files_on_disk` table in the SQLite database
+2. Apply a series of matching rules (exact identifier match, L-number match, tape-number match, regex extraction of FR numbers from filenames)
+3. For each confirmed match, set `film_rolls.has_transfer_on_disk = 1`
+4. Log unmatched files and unmatched transfers for manual review
+5. Store match confidence / match rule used for auditability
+
+#### Output
+
+- Updates `film_rolls.has_transfer_on_disk` in `data/01b_excel.db`
+- Adds `files_on_disk` table to the database (full directory listing)
+- Adds `transfer_file_matches` table linking transfers to confirmed files
+- Prints summary: matched transfers, unmatched files, coverage statistics
 
 ### Stage 2: Parse & Normalize Shot List Data
 
