@@ -22,7 +22,7 @@ import re
 import time
 from pathlib import Path
 
-INPUT_DIR = "input_indexes/MASTER FR shotlist folder"
+INPUT_DIR = "static_assets/shotlist_pdfs"
 OUTPUT_DIR = "data/ocr_comparison"
 
 SPOT_CHECK_FILES = [

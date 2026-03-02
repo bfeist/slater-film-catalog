@@ -9,9 +9,10 @@ Sheets ingested:
     Project 2 - 1635 NARA Selection   — 99 rows, 255-WS/PV/FR/HQ/S/SE identifiers
 
 Schema changes applied automatically on first run:
-    film_rolls:   + nara_roll_number, gauge_65mm, gauge_35mm, nara_shot_list_ref, notes
+    film_rolls:   + nara_roll_number, film_gauge, nara_id, nara_catalog_url, notes
     transfers:    + reel_part
-    nara_citations: new table
+    nara_citations:     new table (NARA collection cross-references)
+    external_file_refs: new table (S3/streaming URLs — not local files)
 
 Identifier rule:
     NARA RG-255 identifiers carry a "255-" collection prefix in the source data.
@@ -37,8 +38,12 @@ from pathlib import Path
 
 import openpyxl
 
-EXCEL_PATH = "input_indexes/First Steps - Master Scanning List.xlsx"
-DB_PATH = "data/01b_excel.db"
+# Resolve paths relative to project root (parent of scripts directory)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+
+EXCEL_PATH = os.path.join(PROJECT_ROOT, "input_indexes/First Steps - Master Scanning List.xlsx")
+DB_PATH = os.path.join(PROJECT_ROOT, "data/01b_excel.db")
 
 SHEET_PV = "Project 1 - NARA Panavision Col"
 SHEET_VENUE = "Project 1 - NARA Special Venue "   # trailing space in actual sheet name
@@ -65,13 +70,27 @@ CREATE TABLE IF NOT EXISTS nara_citations (
 
 CREATE INDEX IF NOT EXISTS idx_nc_reel ON nara_citations(reel_identifier);
 CREATE INDEX IF NOT EXISTS idx_nc_cit  ON nara_citations(citation);
+
+-- External file references: remote URLs that are NOT local disk files.
+-- Examples: NARA S3 shotlist PDFs (before download), NARA streaming video.
+CREATE TABLE IF NOT EXISTS external_file_refs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    reel_identifier TEXT NOT NULL,
+    url             TEXT NOT NULL,
+    ref_type        TEXT,            -- 'nara_shotlist_pdf' | 'nara_streaming_video'
+    filename        TEXT,            -- URL basename
+    source          TEXT             -- e.g. 'nara_json'
+);
+
+CREATE INDEX IF NOT EXISTS idx_efr_reel ON external_file_refs(reel_identifier);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_efr_url ON external_file_refs(url);
 """
 
 NEW_FILM_ROLL_COLUMNS = [
     ("nara_roll_number",  "TEXT"),    # Technicolor/Panavision roll number
-    ("gauge_65mm",        "INTEGER DEFAULT 0"),
-    ("gauge_35mm",        "INTEGER DEFAULT 0"),
-    ("nara_shot_list_ref","TEXT"),    # raw "Shot List" column value
+    ("film_gauge",        "TEXT"),    # e.g. "65mm", "35mm", "16mm"
+    ("nara_id",           "TEXT"),    # NARA archival description NAID
+    ("nara_catalog_url",  "TEXT"),    # NARA catalog page URL
     ("notes",             "TEXT"),    # merged Notes / Comments / Slater notes
 ]
 
@@ -213,7 +232,8 @@ def format_date(val) -> tuple[str | None, str | None]:
 UPSERT_ROLL = """
 INSERT INTO film_rolls
     (identifier, id_prefix, title, date_raw, feet, nara_roll_number,
-     gauge_65mm, gauge_35mm, nara_shot_list_ref, notes,
+     film_gauge, nara_id, nara_catalog_url,
+     notes,
      has_shotlist_pdf, has_transfer_on_disk)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,0)
 ON CONFLICT(identifier) DO UPDATE SET
@@ -221,9 +241,9 @@ ON CONFLICT(identifier) DO UPDATE SET
     date_raw          = COALESCE(EXCLUDED.date_raw, date_raw),
     feet              = COALESCE(EXCLUDED.feet, feet),
     nara_roll_number  = COALESCE(EXCLUDED.nara_roll_number, nara_roll_number),
-    gauge_65mm        = MAX(gauge_65mm, EXCLUDED.gauge_65mm),
-    gauge_35mm        = MAX(gauge_35mm, EXCLUDED.gauge_35mm),
-    nara_shot_list_ref= COALESCE(EXCLUDED.nara_shot_list_ref, nara_shot_list_ref),
+    film_gauge        = COALESCE(EXCLUDED.film_gauge, film_gauge),
+    nara_id           = COALESCE(EXCLUDED.nara_id, nara_id),
+    nara_catalog_url  = COALESCE(EXCLUDED.nara_catalog_url, nara_catalog_url),
     notes             = COALESCE(EXCLUDED.notes, notes),
     has_shotlist_pdf  = MAX(has_shotlist_pdf, EXCLUDED.has_shotlist_pdf)
 """
@@ -308,23 +328,27 @@ def ingest_panavision(ws, db: sqlite3.Connection) -> dict:
         title       = safe_str(row[5]) or safe_str(row[7])  # Reel Title / Content fallback Content
         citations   = safe_str(row[6])
         date_raw    = safe_str(row[8])
-        shot_list   = safe_str(row[9])
         sync_sound  = safe_str(row[10])
-        has_65mm    = 1 if row[11] else 0
-        has_35mm    = 1 if row[12] else 0
+        has_65mm_holding = bool(row[11])  # NARA holds 65mm print
+        has_35mm_holding = bool(row[12])  # NARA holds 35mm print
         footage     = safe_str(row[13])
-        notes       = safe_str(row[14])
+        base_notes  = safe_str(row[14])
 
-        has_pdf = 1 if (shot_list and shot_list not in ("-", "")) else 0
+        # Build notes — append NARA holdings info as text
+        holding_parts = []
+        if has_65mm_holding:
+            holding_parts.append("NARA holds 65mm print")
+        if has_35mm_holding:
+            holding_parts.append("NARA holds 35mm print")
+        notes = " | ".join(filter(None, [base_notes] + holding_parts)) or None
 
         db.execute(UPSERT_ROLL, (
             identifier, extract_id_prefix(identifier),
             title, date_raw,
             footage, pv_roll,
-            has_65mm, has_35mm,
-            shot_list if has_pdf else None,
+            "65mm", None, None,   # film_gauge, nara_id, nara_catalog_url
             notes,
-            has_pdf,
+            0,                    # has_shotlist_pdf (Shot List column is locked Google Drive)
         ))
         rows_inserted += 1
 
@@ -356,24 +380,21 @@ def ingest_special_venue(ws, db: sqlite3.Connection) -> dict:
 
         digital_fn  = safe_str(row[1])
         title       = safe_str(row[2])
-        shot_list   = safe_str(row[3])
+        # row[3] = Shot List (locked Google Drive — not usable)
         gauge_raw   = safe_str(row[4])
         fmt         = safe_str(row[5])
         footage     = safe_str(row[6])
         notes       = safe_str(row[7])
 
-        has_65mm = 1 if gauge_raw and "65" in gauge_raw else 0
-        has_35mm = 1 if gauge_raw and "35" in gauge_raw else 0
-        has_pdf  = 1 if (shot_list and shot_list not in ("-", "")) else 0
+        film_gauge = gauge_raw if gauge_raw and gauge_raw not in ("-",) else None
 
         db.execute(UPSERT_ROLL, (
             identifier, extract_id_prefix(identifier),
             title, None,
             footage, None,
-            has_65mm, has_35mm,
-            shot_list if has_pdf else None,
+            film_gauge, None, None,   # film_gauge, nara_id, nara_catalog_url
             notes,
-            has_pdf,
+            0,                        # has_shotlist_pdf
         ))
         rows_inserted += 1
 
@@ -435,14 +456,10 @@ def ingest_project2(ws, db: sqlite3.Connection) -> dict:
         "shot_list": 8,
         "sync":      9,
         "comments": 10,
-        "best_src":  col("Best Available NARA Source"),
         "jsc_roll":  col("JSC File Roll"),
         "hq_roll":   col("HQ Stock"),
         "eng_roll":  col("Engineering Footage"),
         "slater":    col("Stephen Slater"),
-        "lto":       col("LTO / Tape"),
-        "stmt_ref":  col("Statement Pictures"),
-        "confirm":   col("Confirmation of NARA"),
     }
 
     for row in ws.iter_rows(min_row=2, values_only=True):
@@ -462,34 +479,31 @@ def ingest_project2(ws, db: sqlite3.Connection) -> dict:
         shot_list  = safe_str(row[COL["shot_list"]])
         sync       = safe_str(row[COL["sync"]])
 
-        # Merge notes from multiple columns
+        # Merge notes from retained columns only
         note_parts = []
-        for note_col in ("comments", "best_src", "slater", "stmt_ref"):
-            v = safe_str(row[COL[note_col]]) if COL[note_col] is not None else None
+        for note_col in ("comments", "slater"):
+            v = safe_str(row[COL[note_col]]) if COL.get(note_col) is not None else None
             if v:
                 note_parts.append(v)
         notes = " | ".join(note_parts) if note_parts else None
 
-        has_pdf = 1 if (shot_list and shot_list not in ("-", "")) else 0
+        # Parse film_gauge from Format column (e.g. "65mm" or "35mm")
+        gauge_match = re.search(r"\b(\d+mm)\b", fmt or "", re.IGNORECASE)
+        film_gauge = gauge_match.group(1).lower() if gauge_match else None
 
         db.execute(UPSERT_ROLL, (
             identifier, extract_id_prefix(identifier),
             title, date_raw,
             footage, None,
-            0, 0,
-            shot_list if has_pdf else None,
+            film_gauge, None, None,  # film_gauge, nara_id, nara_catalog_url
             notes,
-            has_pdf,
+            0,                       # has_shotlist_pdf
         ))
         rows_inserted += 1
 
         if insert_transfer(db, identifier, digital_fn, reel_part, fmt, sync, SHEET_P2):
             xfers_inserted += 1
 
-        # LTO transfer
-        lto_val = safe_str(row[COL["lto"]]) if COL["lto"] is not None else None
-        if lto_val and insert_lto(db, identifier, lto_val, SHEET_P2):
-            xfers_inserted += 1
 
         # Citations: primary + collection cross-refs
         if citations:
@@ -499,12 +513,129 @@ def ingest_project2(ws, db: sqlite3.Connection) -> dict:
             ("jsc_roll",  "NARA JSC File Roll Collection Reel #"),
             ("hq_roll",   "NARA HQ Stock Footage Collection Reel #"),
             ("eng_roll",  "NARA JSC Engineering Footage Collection Reel #"),
-            ("confirm",   "Confirmation of NARA Source Reels"),
         ]:
             idx = COL.get(cit_col_key)
             val = safe_str(row[idx]) if idx is not None else None
             if val:
                 cits_inserted += insert_citations(db, identifier, val, col_label, SHEET_P2)
+
+    db.commit()
+    return {"rows": rows_inserted, "transfers": xfers_inserted, "citations": cits_inserted}
+
+
+# ---------------------------------------------------------------------------
+# NARA JSON ingest
+# ---------------------------------------------------------------------------
+
+NARA_JSON_PATH = os.path.join(PROJECT_ROOT, "input_indexes/nara_apollo_70mm_metadata.json")
+
+
+def _parse_nara_date(dates: list[dict]) -> str | None:
+    """Extract best date string from NARA dates list."""
+    if not dates:
+        return None
+    for d in dates:
+        if isinstance(d, dict):
+            v = d.get("date") or d.get("dateRange", {}).get("fromDate") or d.get("dateRange", {}).get("toDate")
+            if v:
+                return str(v)[:10]  # YYYY-MM-DD
+    return None
+
+
+def ingest_nara_json(json_path: str, db: sqlite3.Connection) -> dict:
+    """Ingest NARA catalog JSON into film_rolls, transfers, and nara_citations."""
+    import json
+
+    with open(json_path, encoding="utf-8") as fh:
+        records = json.load(fh)
+
+    rows_inserted = 0
+    xfers_inserted = 0
+    cits_inserted = 0
+
+    for rec in records:
+        local_id = str(rec.get("local_identifier", "")).strip()
+        if not local_id:
+            continue
+
+        identifier = normalize_nara_id(local_id)
+        naid = str(rec.get("naid", "")).strip() or None
+        url  = str(rec.get("url",  "")).strip() or None
+
+        # Title: prefer title list, fall back to description
+        title = None
+        raw_titles = rec.get("title", [])
+        if isinstance(raw_titles, list) and raw_titles:
+            title = str(raw_titles[0]).strip() or None
+        elif isinstance(raw_titles, str):
+            title = raw_titles.strip() or None
+
+        description = safe_str(rec.get("description"))
+        date_raw    = _parse_nara_date(rec.get("dates", []))
+
+        # Collect digital object URLs by type
+        shotlist_url = None
+        mp4_url      = None
+        for dobj in (rec.get("digital_objects") or []):
+            obj_type = str(dobj.get("type", "")).lower()
+            dl_url   = dobj.get("download_url") or dobj.get("url") or ""
+            if not mp4_url and obj_type == "video":
+                mp4_url = dl_url.strip() or None
+            if not shotlist_url and obj_type in ("document", "pdf"):
+                shotlist_url = dl_url.strip() or None
+
+        has_shotlist = 1 if shotlist_url else 0
+
+        db.execute(UPSERT_ROLL, (
+            identifier, extract_id_prefix(identifier),
+            title, date_raw,
+            None, None,          # feet, nara_roll_number (set from xlsx)
+            "65mm", naid, url,   # film_gauge (PV reels are 65mm), nara_id, nara_catalog_url
+            description,
+            has_shotlist,
+        ))
+        rows_inserted += 1
+
+        # External file refs: S3 shotlist PDF and streaming video (not local files)
+        for ext_url, ext_type in [
+            (shotlist_url, "nara_shotlist_pdf"),
+            (mp4_url,      "nara_streaming_video"),
+        ]:
+            if not ext_url:
+                continue
+            fn = ext_url.split("/")[-1].split("?")[0] or None
+            exists = db.execute(
+                "SELECT 1 FROM external_file_refs WHERE url=?",
+                (ext_url,),
+            ).fetchone()
+            if not exists:
+                db.execute(
+                    "INSERT INTO external_file_refs (reel_identifier, url, ref_type, filename, source) "
+                    "VALUES (?,?,?,?,?)",
+                    (identifier, ext_url, ext_type, fn, "nara_json"),
+                )
+                xfers_inserted += 1
+
+        # Citations from agency_assigned_identifiers
+        for aid in (rec.get("agency_assigned_identifiers") or []):
+            if not isinstance(aid, dict):
+                continue
+            num  = safe_str(aid.get("number"))
+            note = safe_str(aid.get("organizationNote") or aid.get("note") or aid.get("type"))
+            if num:
+                cit_text = f"{note}: {num}" if note else num
+                cit_type = "pv_roll_number" if (note and "technicolor" in note.lower()) else "other"
+                exists = db.execute(
+                    "SELECT 1 FROM nara_citations WHERE reel_identifier=? AND citation=?",
+                    (identifier, cit_text),
+                ).fetchone()
+                if not exists:
+                    db.execute(
+                        "INSERT INTO nara_citations (reel_identifier, citation, citation_type, source_column, source_sheet) "
+                        "VALUES (?,?,?,?,?)",
+                        (identifier, cit_text, cit_type, "agency_assigned_identifiers", "nara_json"),
+                    )
+                    cits_inserted += 1
 
     db.commit()
     return {"rows": rows_inserted, "transfers": xfers_inserted, "citations": cits_inserted}
@@ -520,9 +651,10 @@ def print_stats(db: sqlite3.Connection) -> None:
     print("=" * 65)
 
     for table, label in [
-        ("film_rolls",     "Film Rolls (content)"),
-        ("transfers",      "Transfers (instances)"),
-        ("nara_citations", "NARA Citations"),
+        ("film_rolls",         "Film Rolls (content)"),
+        ("transfers",          "Transfers (local disk)"),
+        ("nara_citations",     "NARA Citations"),
+        ("external_file_refs", "External File Refs (S3/stream)"),
     ]:
         try:
             count = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
@@ -575,8 +707,12 @@ def main() -> None:
                         help="Delete all rows originating from this spreadsheet and re-insert")
     parser.add_argument("--stats", action="store_true",
                         help="Print stats only (no ingest)")
+    parser.add_argument("--source", choices=["xlsx", "nara-json", "all"], default="xlsx",
+                        help="Data source to ingest (default: xlsx)")
     parser.add_argument("--sheet", choices=["pv", "venue", "p2", "all"], default="all",
-                        help="Which sheet(s) to ingest (default: all)")
+                        help="Which xlsx sheet(s) to ingest (default: all)")
+    parser.add_argument("--nara-json", default=NARA_JSON_PATH, metavar="PATH",
+                        help="Path to NARA catalog JSON")
     args = parser.parse_args()
 
     if not os.path.exists(DB_PATH):
@@ -596,28 +732,54 @@ def main() -> None:
         return
 
     if args.force:
-        print("--force: removing rows sourced from First Steps spreadsheet...")
-        db.execute("DELETE FROM nara_citations WHERE source_sheet IN (?,?,?)",
-                   (SHEET_PV, SHEET_VENUE, SHEET_P2))
-        db.execute("DELETE FROM transfers WHERE source_tab IN (?,?,?)",
-                   (SHEET_PV, SHEET_VENUE, SHEET_P2))
+        print("--force: removing rows sourced from First Steps spreadsheet / NARA JSON...")
+        sheets = [SHEET_PV, SHEET_VENUE, SHEET_P2]
+        if args.source in ("nara-json", "all"):
+            sheets.append("nara_json")
+        placeholders = ",".join("?" * len(sheets))
+        db.execute(f"DELETE FROM nara_citations WHERE source_sheet IN ({placeholders})", sheets)
+        db.execute(f"DELETE FROM transfers WHERE source_tab IN ({placeholders})", sheets)
+        db.execute(f"DELETE FROM external_file_refs WHERE source IN ({placeholders})", sheets)
         # Note: we do NOT delete film_rolls rows because they may have data from other sources.
         db.commit()
         print("  Done.")
 
-    print(f"Loading {EXCEL_PATH}...")
-    t0 = time.time()
-    wb = openpyxl.load_workbook(EXCEL_PATH, read_only=True, data_only=True)
-    print(f"  Loaded in {time.time() - t0:.1f}s")
-
     total_rows = total_xfers = total_cits = 0
 
-    def run_sheet(label: str, sheet_name: str, fn):
-        nonlocal total_rows, total_xfers, total_cits
+    wb = None
+    if args.source in ("xlsx", "all"):
+        print(f"Loading {EXCEL_PATH}...")
+        t0 = time.time()
+        wb = openpyxl.load_workbook(EXCEL_PATH, read_only=True, data_only=True)
+        print(f"  Loaded in {time.time() - t0:.1f}s")
+
+        def run_sheet(label: str, sheet_name: str, fn):
+            nonlocal total_rows, total_xfers, total_cits
+            t1 = time.time()
+            print(f"\nIngesting '{sheet_name}'...", end=" ", flush=True)
+            ws = wb[sheet_name]
+            result = fn(ws, db)
+            elapsed = time.time() - t1
+            print(f"{result['rows']:,d} rolls, {result['transfers']:,d} transfers, "
+                  f"{result.get('citations', 0):,d} citations ({elapsed:.1f}s)")
+            total_rows  += result["rows"]
+            total_xfers += result["transfers"]
+            total_cits  += result.get("citations", 0)
+            db.execute("INSERT OR REPLACE INTO _manifest VALUES (?,?)",
+                       (f"first_steps_{label}_rows", str(result["rows"])))
+
+        if args.sheet in ("pv", "all"):
+            run_sheet("pv", SHEET_PV, ingest_panavision)
+        if args.sheet in ("venue", "all"):
+            run_sheet("venue", SHEET_VENUE, ingest_special_venue)
+        if args.sheet in ("p2", "all"):
+            run_sheet("p2", SHEET_P2, ingest_project2)
+
+    if args.source in ("nara-json", "all"):
+        json_path = getattr(args, "nara_json")  # argparse converts --nara-json to nara_json
+        print(f"\nIngesting NARA JSON ({json_path})...", end=" ", flush=True)
         t1 = time.time()
-        print(f"\nIngesting '{sheet_name}'...", end=" ", flush=True)
-        ws = wb[sheet_name]
-        result = fn(ws, db)
+        result = ingest_nara_json(json_path, db)
         elapsed = time.time() - t1
         print(f"{result['rows']:,d} rolls, {result['transfers']:,d} transfers, "
               f"{result.get('citations', 0):,d} citations ({elapsed:.1f}s)")
@@ -625,14 +787,7 @@ def main() -> None:
         total_xfers += result["transfers"]
         total_cits  += result.get("citations", 0)
         db.execute("INSERT OR REPLACE INTO _manifest VALUES (?,?)",
-                   (f"first_steps_{label}_rows", str(result["rows"])))
-
-    if args.sheet in ("pv", "all"):
-        run_sheet("pv", SHEET_PV, ingest_panavision)
-    if args.sheet in ("venue", "all"):
-        run_sheet("venue", SHEET_VENUE, ingest_special_venue)
-    if args.sheet in ("p2", "all"):
-        run_sheet("p2", SHEET_P2, ingest_project2)
+                   ("first_steps_nara_json_rows", str(result["rows"])))
 
     db.execute("INSERT OR REPLACE INTO _manifest VALUES (?,?)",
                ("first_steps_total_rows",      str(total_rows)))
@@ -644,7 +799,8 @@ def main() -> None:
                ("first_steps_completed_at", time.strftime("%Y-%m-%dT%H:%M:%S")))
     db.commit()
 
-    wb.close()
+    if wb is not None:
+        wb.close()
 
     print(f"\nTotal: {total_rows:,d} rolls, {total_xfers:,d} transfers, {total_cits:,d} citations")
     print_stats(db)

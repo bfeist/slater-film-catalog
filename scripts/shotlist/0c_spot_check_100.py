@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-INPUT_DIR = "input_indexes/MASTER FR shotlist folder"
+INPUT_DIR = "static_assets/shotlist_pdfs"
 OUTPUT_DIR = "data/spot_check_100"
 REPORT_PATH = "docs/spot-check-100-report.md"
 

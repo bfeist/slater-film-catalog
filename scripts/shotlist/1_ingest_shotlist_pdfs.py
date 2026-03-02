@@ -29,7 +29,7 @@ import sys
 import time
 from pathlib import Path
 
-INPUT_DIR = "input_indexes/MASTER FR shotlist folder"
+INPUT_DIR = "static_assets/shotlist_pdfs"
 OUTPUT_DIR = "data/01_shotlist_raw"
 MANIFEST_PATH = os.path.join(OUTPUT_DIR, "_manifest.json")
 

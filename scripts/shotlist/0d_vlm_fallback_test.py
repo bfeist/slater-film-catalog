@@ -26,7 +26,7 @@ from pathlib import Path
 
 import torch
 
-INPUT_DIR = "input_indexes/MASTER FR shotlist folder"
+INPUT_DIR = "static_assets/shotlist_pdfs"
 SPOT_CHECK_RESULTS = "data/spot_check_100/_results.json"
 OUTPUT_DIR = "data/vlm_fallback"
 

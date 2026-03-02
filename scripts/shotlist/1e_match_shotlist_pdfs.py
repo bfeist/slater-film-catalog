@@ -25,7 +25,7 @@ import sqlite3
 import sys
 from collections import defaultdict
 
-PDF_DIR = "input_indexes/MASTER FR shotlist folder"
+PDF_DIR = "static_assets/shotlist_pdfs"
 DB_PATH = "data/01b_excel.db"
 
 

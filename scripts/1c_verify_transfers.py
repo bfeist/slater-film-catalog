@@ -1,52 +1,76 @@
 """
 Stage 1c: Directory crawl & transfer verification.
 
-Scans /o/ Master folders and MPEG-2 (READ-ONLY) to build a file inventory,
-then matches discovered files against the transfers table in 01b_excel.db.
+Scans /o/ Master folders and proxy directories (READ-ONLY) to build a file
+inventory, then matches discovered files against the transfers table in
+01b_excel.db.
 
 Currently scans:
-    /o/Master 1/   (tapes 501–562)
-    /o/Master 2/   (tapes 563–625)
-    /o/Master 3/   (tapes 626–712)
-    /o/Master 4/   (tapes 713–886)
-    /o/MPEG-2/     (684 MPEG-2 proxy files, LNNNNNN[_suffix].mpg)
+    /o/Master 1/        (tapes 501–562)
+    /o/Master 2/        (tapes 563–625)
+    /o/Master 3/        (tapes 626–712)
+    /o/Master 4/        (tapes 713–886)
+    /o/Master 5/70mm Panavision Collection/
+                        (NARA 70mm: 255-pv-NNN, 255-FR-XXX, 255-se-NN-NNN, …)
+    /o/MPEG-Proxies/    (all proxy sub-folders, multiple naming conventions)
+      MPEG-2/           L000NNN_FR-NNN.mpg  (LTO-based MPEG-2s)
+      MPEG-2_FR/        FR-NNNN.mpg         (bare FR identifiers)
+      MPEG-2_Imagery_Online_proxy_files/IO/
+                        FR-C176_jsc2014m009788.mp4  (identifier + JSC asset #)
+      NARA/             255-fr-1029.mp4, 255-ak-17.mp4, …  (NARA-prefixed)
 
 Reports:
-    - Files matched to transfers
-    - Files that could NOT be resolved to any transfer
-    - Transfers that claim a file exists but none was found on disk
+    - Files matched to transfers (and what rule matched them)
+    - Unmatched files (no identifier could be resolved)
     - Sets film_rolls.has_transfer_on_disk = 1 for confirmed matches
+
+Matching is handled by two small modules:
+    matchers/filename_parser.py  — filename → list of candidate identifiers
+    matchers/db_resolve.py       — candidates → transfer rows
+
+Adding support for a new folder/naming convention only requires updating
+filename_parser.py, never this file.
 
 Usage:
     uv run python scripts/1c_verify_transfers.py              # full scan
-    uv run python scripts/1c_verify_transfers.py --dry-run    # report only, don't update DB
+    uv run python scripts/1c_verify_transfers.py --dry-run    # report only
     uv run python scripts/1c_verify_transfers.py --stats      # show existing stats
 
 ⚠️  /o/ is STRICTLY READ-ONLY — this script only reads directory listings.
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import re
 import sqlite3
+import sys
 import time
-from pathlib import Path
+
+# Allow "from matchers.x import y" without installing the package.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from matchers.db_resolve import ResolvedMatch, resolve
+from matchers.filename_parser import parse_filename
 
 DB_PATH = "data/01b_excel.db"
 
 # Folders to scan — /o/ is READ-ONLY, we only list files.
-# On Windows, the network share is mounted as O:\ (accessed as O:/ in GitBash).
-# Master 4 has large subdirs (BBC/, LMOTM/) that aren't tape files — scan top-level only.
 SCAN_ROOTS = [
-    ("O:/Master 1", True),     # (path, recursive)
-    ("O:/Master 2", True),
-    ("O:/Master 3", True),
-    ("O:/Master 4", False),    # top-level only — skip BBC/, LMOTM subdirs
-    ("O:/MPEG-2",   False),    # MPEG-2 proxy files
+    ("O:/Master 1", True),                               # tapes 501–562
+    ("O:/Master 2", True),                               # tapes 563–625
+    ("O:/Master 3", True),                               # tapes 626–712
+    ("O:/Master 4", True),                               # tapes 713–886
+    ("O:/Master 5/70mm Panavision Collection", True),    # NARA 70mm scans
+    ("O:/Master 5/FR-Masters", True),                    # NARA FR scans
+    ("O:/MPEG-Proxies", True),                           # all proxy subfolders
 ]
 
-# Naming convention: tape number ranges → Master folders.
-# Used instead of a DB table to resolve tape numbers to expected paths.
+MASTER5_ROOT = "O:/Master 5/70mm Panavision Collection"
+PROXY_ROOT   = "O:/MPEG-Proxies"
+
+# Tape number → Master folder mapping (for gap detection in the report).
 TAPE_FOLDER_RANGES = [
     (501, 562, "Master 1"),
     (563, 625, "Master 2"),
@@ -54,9 +78,20 @@ TAPE_FOLDER_RANGES = [
     (713, 886, "Master 4"),
 ]
 
+# Placeholder/noise files to skip entirely.
+IGNORE_RE = re.compile(
+    r"not missing.*doesn.?t exist|doesn.?t exist.*not missing|MISSING",
+    re.IGNORECASE,
+)
+
+MASTER_ROOTS = {"O:/Master 1", "O:/Master 2", "O:/Master 3", "O:/Master 4"}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def tape_master_folder(tape_num: int) -> str | None:
-    """Return the Master folder name for a tape number, or None if out of range."""
     for start, end, folder in TAPE_FOLDER_RANGES:
         if start <= tape_num <= end:
             return folder
@@ -64,28 +99,21 @@ def tape_master_folder(tape_num: int) -> str | None:
 
 
 def tape_expected_path(tape_num: int) -> str | None:
-    """Return the expected /o/ path for a tape number."""
     folder = tape_master_folder(tape_num)
     if folder:
-        return f"/o/{folder}/Tape {tape_num} - Self Contained.mov"
+        return f"O:/{folder}/Tape {tape_num} - Self Contained.mov"
     return None
 
 
-# Placeholder patterns to completely ignore (these are not real files).
-IGNORE_RE = re.compile(
-    r"not missing.*doesn.?t exist|doesn.?t exist.*not missing|MISSING",
-    re.IGNORECASE,
-)
-
 # ---------------------------------------------------------------------------
-# Schema additions (tables added by this script)
+# Schema
 # ---------------------------------------------------------------------------
 
 STAGE_1C_SCHEMA = """
 -- Files discovered on /o/ via directory crawl.
 CREATE TABLE IF NOT EXISTS files_on_disk (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    folder_root     TEXT NOT NULL,           -- e.g. '/o/Master 1'
+    folder_root     TEXT NOT NULL,           -- e.g. 'O:/Master 1'
     rel_path        TEXT NOT NULL,           -- path relative to folder_root
     filename        TEXT NOT NULL,
     extension       TEXT,                    -- lowercase, e.g. '.mov'
@@ -94,22 +122,22 @@ CREATE TABLE IF NOT EXISTS files_on_disk (
 );
 
 CREATE INDEX IF NOT EXISTS idx_fod_filename ON files_on_disk(filename);
-CREATE INDEX IF NOT EXISTS idx_fod_ext ON files_on_disk(extension);
-CREATE INDEX IF NOT EXISTS idx_fod_root ON files_on_disk(folder_root);
+CREATE INDEX IF NOT EXISTS idx_fod_ext      ON files_on_disk(extension);
+CREATE INDEX IF NOT EXISTS idx_fod_root     ON files_on_disk(folder_root);
 
 -- Matches between on-disk files and transfers.
 CREATE TABLE IF NOT EXISTS transfer_file_matches (
     file_id         INTEGER NOT NULL REFERENCES files_on_disk(id),
-    transfer_id     INTEGER REFERENCES transfers(id),          -- NULL if no transfer found
-    tape_number     INTEGER,                                   -- populated for tape matches
-    match_rule      TEXT NOT NULL,                              -- e.g. 'tape_number', 'filename_exact', 'identifier_in_path'
-    reel_identifier TEXT,                                       -- the film_roll identifier this resolves to (if known)
+    transfer_id     INTEGER REFERENCES transfers(id),     -- NULL if roll found but no transfer
+    tape_number     INTEGER,                              -- populated for tape_number matches
+    match_rule      TEXT NOT NULL,                        -- e.g. 'tape_number', 'lto_vfr', 'identifier'
+    reel_identifier TEXT,                                 -- film_roll identifier resolved to
     UNIQUE(file_id, transfer_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_tfm_file ON transfer_file_matches(file_id);
+CREATE INDEX IF NOT EXISTS idx_tfm_file     ON transfer_file_matches(file_id);
 CREATE INDEX IF NOT EXISTS idx_tfm_transfer ON transfer_file_matches(transfer_id);
-CREATE INDEX IF NOT EXISTS idx_tfm_reel ON transfer_file_matches(reel_identifier);
+CREATE INDEX IF NOT EXISTS idx_tfm_reel     ON transfer_file_matches(reel_identifier);
 """
 
 
@@ -117,35 +145,41 @@ CREATE INDEX IF NOT EXISTS idx_tfm_reel ON transfer_file_matches(reel_identifier
 # Directory scanning
 # ---------------------------------------------------------------------------
 
-def scan_folder(root: str, db: sqlite3.Connection, recursive: bool = True) -> int:
-    """Walk a folder tree and insert files into files_on_disk.
+def scan_folder(
+    root: str,
+    db: sqlite3.Connection,
+    recursive: bool = True,
+) -> tuple[int, set[str]]:
+    """Walk *root* and upsert files into ``files_on_disk``.
 
-    If recursive=False, only scans the top-level directory (no subdirs).
-    Returns count of files inserted.
+    Existing rows (keyed on folder_root + rel_path UNIQUE) are left untouched
+    so primary-key IDs — and ffprobe_metadata rows referencing them — remain
+    stable across re-runs.
+
+    Returns ``(count_touched, set_of_rel_paths_seen)``.
     """
     count = 0
-    root_path = Path(root)
+    seen: set[str] = set()
 
     if recursive:
         walker = os.walk(root)
     else:
-        # Top-level only: yield a single (dirpath, dirnames, filenames) tuple
         try:
             entries = list(os.scandir(root))
             files = [e.name for e in entries if e.is_file()]
             walker = [(root, [], files)]
         except OSError:
-            return 0
+            return 0, seen
 
     for dirpath, _dirnames, filenames in walker:
         for fname in filenames:
-            # Skip placeholder files ("not missing - doesn't exist", "MISSING")
             if IGNORE_RE.search(fname):
                 continue
 
             full = os.path.join(dirpath, fname)
-            rel = os.path.relpath(full, root).replace("\\", "/")
-            ext = os.path.splitext(fname)[1].lower() or None
+            rel  = os.path.relpath(full, root).replace("\\", "/")
+            ext  = os.path.splitext(fname)[1].lower() or None
+            seen.add(rel)
 
             try:
                 size = os.path.getsize(full)
@@ -161,196 +195,76 @@ def scan_folder(root: str, db: sqlite3.Connection, recursive: bool = True) -> in
             count += 1
 
     db.commit()
-    return count
+    return count, seen
 
 
 # ---------------------------------------------------------------------------
-# Matching rules
+# Matching — single unified pass
 # ---------------------------------------------------------------------------
 
-# Regex: "Tape 508 - Self Contained.mov" or "Tape 507 - Self Contained - Part 1 Of 2.mov"
-TAPE_RE = re.compile(r"^Tape\s+(\d+)\s*-", re.IGNORECASE)
+def match_all_files(db: sqlite3.Connection) -> dict[str, int]:
+    """Match every file in ``files_on_disk`` to transfers using the filename parser.
 
+    Delegates all filename interpretation to ``matchers.filename_parser`` and
+    all DB lookups to ``matchers.db_resolve``.  No per-folder special-casing
+    lives here — adding a new folder/naming convention only requires touching
+    the parser.
 
-def match_tape_files(db: sqlite3.Connection) -> tuple[int, int]:
-    """Match 'Tape NNN' filenames to discovery_capture transfers.
-
-    Uses the naming convention (TAPE_FOLDER_RANGES) to validate tape numbers
-    instead of a separate tape_to_file table.
-
-    Returns (matched_files, matched_transfers).
+    Returns a dict of match_rule → row count for progress display.
     """
-    matched_files = 0
-    matched_xfers = 0
-
     rows = db.execute(
-        "SELECT id, filename FROM files_on_disk "
-        "WHERE folder_root IN ('O:/Master 1', 'O:/Master 2', 'O:/Master 3', 'O:/Master 4')"
+        "SELECT id, folder_root, filename FROM files_on_disk"
     ).fetchall()
 
-    for file_id, filename in rows:
-        m = TAPE_RE.match(filename)
-        if not m:
+    counts: dict[str, int] = {}
+
+    for file_id, _folder_root, filename in rows:
+        parsed  = parse_filename(filename)
+        matches = resolve(db, parsed)
+
+        if not matches:
             continue
 
-        tape_num = int(m.group(1))
-
-        # Find all discovery_capture transfers for this tape
-        xfers = db.execute(
-            "SELECT id, reel_identifier FROM transfers "
-            "WHERE transfer_type = 'discovery_capture' AND tape_number = ?",
-            (str(tape_num),),
-        ).fetchall()
-
-        if xfers:
-            for xfer_id, reel_ident in xfers:
-                db.execute(
-                    "INSERT OR IGNORE INTO transfer_file_matches "
-                    "(file_id, transfer_id, tape_number, match_rule, reel_identifier) "
-                    "VALUES (?,?,?,?,?)",
-                    (file_id, xfer_id, tape_num, "tape_number", reel_ident),
-                )
-                matched_xfers += 1
-        else:
-            # Tape file exists on disk but no discovery_capture transfer references it
+        for match in matches:
             db.execute(
                 "INSERT OR IGNORE INTO transfer_file_matches "
                 "(file_id, transfer_id, tape_number, match_rule, reel_identifier) "
                 "VALUES (?,?,?,?,?)",
-                (file_id, None, tape_num, "tape_number_no_transfer", None),
+                (
+                    file_id,
+                    match.transfer_id,
+                    match.tape_number,
+                    match.match_rule,
+                    match.reel_identifier,
+                ),
             )
-
-        matched_files += 1
+            counts[match.match_rule] = counts.get(match.match_rule, 0) + 1
 
     db.commit()
-    return matched_files, matched_xfers
+    return counts
 
 
-# ---------------------------------------------------------------------------
-# MPEG-2 matching
-# ---------------------------------------------------------------------------
+def dedup_transfer_file_matches(db: sqlite3.Connection) -> int:
+    """Remove duplicate transfer_file_matches rows keeping one per (file_id, reel_identifier).
 
-# MPEG-2 filenames: L000003_FR-27.mpg  or  L000007.mpg
-MPEG2_RE = re.compile(r"^(L\d+)(?:_(.+))?\.mpg$", re.IGNORECASE)
+    Fan-out matching (one file → many transfers for the same reel) can leave
+    multiple rows with the same file_id + reel_identifier.  Only one row per
+    physical file per reel is meaningful for downstream queries.
 
+    Keeps the row with the lowest rowid (first inserted = most specific).
 
-def match_mpeg2_files(db: sqlite3.Connection) -> tuple[int, int, int]:
-    """Match MPEG-2 proxy files to transfers via video_file_ref and lto_number.
-
-    Filename patterns:
-        L000003_FR-27.mpg       → video_file_ref = 'L000003/FR-0027'  (/ → _ on disk)
-        L000007.mpg             → lto_number = 'L000007'  (all transfers on that LTO)
-        L000803_FR-AK-3.mpg     → video_file_ref = 'L000803/FR-AK-3'
-
-    Returns (matched_files, matched_transfers, unmatched_files).
+    Returns number of duplicate rows deleted.
     """
-    matched_files = 0
-    matched_xfers = 0
-    unmatched_files = 0
-
-    rows = db.execute(
-        "SELECT id, filename FROM files_on_disk WHERE folder_root = 'O:/MPEG-2'"
-    ).fetchall()
-
-    for file_id, filename in rows:
-        m = MPEG2_RE.match(filename)
-        if not m:
-            unmatched_files += 1
-            continue
-
-        lto = m.group(1)       # e.g. 'L000003'
-        suffix = m.group(2)    # e.g. 'FR-27' or None
-
-        xfers = []
-
-        if suffix:
-            # Build video_file_ref: L000003_FR-27 → L000003/FR-27
-            vfr_raw = f"{lto}/{suffix}"
-            # Try exact match first
-            xfers = db.execute(
-                "SELECT id, reel_identifier FROM transfers WHERE video_file_ref = ?",
-                (vfr_raw,),
-            ).fetchall()
-
-            # If no match, try zero-padding the numeric part of FR-NNN
-            if not xfers and suffix.startswith("FR-"):
-                fr_rest = suffix[3:]  # e.g. '27'
-                # Pad purely numeric FR numbers to 4 digits
-                if fr_rest.isdigit() and len(fr_rest) < 4:
-                    vfr_padded = f"{lto}/FR-{fr_rest.zfill(4)}"
-                    xfers = db.execute(
-                        "SELECT id, reel_identifier FROM transfers WHERE video_file_ref = ?",
-                        (vfr_padded,),
-                    ).fetchall()
-
-            # Fallback: try LIKE match for edge cases (e.g. AK15 vs AK-15)
-            if not xfers:
-                xfers = db.execute(
-                    "SELECT id, reel_identifier FROM transfers "
-                    "WHERE video_file_ref LIKE ? AND lto_number = ?",
-                    (f"{lto}/%", lto),
-                ).fetchall()
-                # Filter to only those whose vfr suffix matches closely
-                if len(xfers) > 1:
-                    # Don't do a broad match — leave as unresolved
-                    xfers = []
-        else:
-            # Bare L-number file: match by lto_number (all transfers on this LTO),
-            # falling back to video_file_ref prefix if lto_number field is missing.
-            xfers = db.execute(
-                "SELECT id, reel_identifier FROM transfers WHERE lto_number = ?",
-                (lto,),
-            ).fetchall()
-            if not xfers:
-                xfers = db.execute(
-                    "SELECT id, reel_identifier FROM transfers "
-                    "WHERE video_file_ref LIKE ? || '/%'",
-                    (lto,),
-                ).fetchall()
-
-        if xfers:
-            rule = "mpeg2_vfr" if suffix else "mpeg2_lto"
-            for xfer_id, reel_ident in xfers:
-                db.execute(
-                    "INSERT OR IGNORE INTO transfer_file_matches "
-                    "(file_id, transfer_id, tape_number, match_rule, reel_identifier) "
-                    "VALUES (?,?,?,?,?)",
-                    (file_id, xfer_id, None, rule, reel_ident),
-                )
-                matched_xfers += 1
-            matched_files += 1
-        elif suffix:
-            # Suffixed file couldn't exact-match via video_file_ref.
-            # Fall back to matching by LTO number (left of '/') — links to ALL
-            # transfers on that LTO tape, same as a bare L-number file would.
-            lto_xfers = db.execute(
-                "SELECT id, reel_identifier FROM transfers WHERE lto_number = ?",
-                (lto,),
-            ).fetchall()
-            if not lto_xfers:
-                # Also try matching against the prefix of video_file_ref
-                lto_xfers = db.execute(
-                    "SELECT id, reel_identifier FROM transfers "
-                    "WHERE video_file_ref LIKE ? || '/%'",
-                    (lto,),
-                ).fetchall()
-            if lto_xfers:
-                for xfer_id, reel_ident in lto_xfers:
-                    db.execute(
-                        "INSERT OR IGNORE INTO transfer_file_matches "
-                        "(file_id, transfer_id, tape_number, match_rule, reel_identifier) "
-                        "VALUES (?,?,?,?,?)",
-                        (file_id, xfer_id, None, "mpeg2_lto_fallback", reel_ident),
-                    )
-                    matched_xfers += 1
-                matched_files += 1
-            else:
-                unmatched_files += 1
-        else:
-            unmatched_files += 1
-
+    result = db.execute("""
+        DELETE FROM transfer_file_matches
+        WHERE rowid NOT IN (
+            SELECT MIN(rowid)
+            FROM transfer_file_matches
+            GROUP BY file_id, COALESCE(reel_identifier, '__null__')
+        )
+    """)
     db.commit()
-    return matched_files, matched_xfers, unmatched_files
+    return result.rowcount
 
 
 def set_has_transfer_on_disk(db: sqlite3.Connection) -> int:
@@ -374,18 +288,21 @@ def backfill_transfer_file_paths(db: sqlite3.Connection) -> int:
     """Populate transfers.filename and transfers.file_path from matched on-disk files.
 
     For each transfer linked via transfer_file_matches, sets filename and file_path
-    to the actual on-disk file. Prefers the most specific match rule:
-        mpeg2_vfr > mpeg2_lto_fallback > mpeg2_lto > tape_number
+    to the actual on-disk file.  The most specific match rule wins:
+        identifier > lto_vfr > lto_fallback > tape_number
 
     Returns count of transfers updated.
     """
     # Rank match rules — lower number = more specific = preferred.
     RULE_RANK = {
-        "mpeg2_vfr": 1,
-        "mpeg2_lto_fallback": 2,
-        "mpeg2_lto": 3,
-        "tape_number": 4,
-        "tape_number_no_transfer": 5,
+        "identifier":              1,
+        "lto_vfr":                 2,
+        "lto_fallback":            3,
+        "tape_number":             4,
+        "tape_shotlist_only":      5,
+        "identifier_no_transfer":  6,
+        "tape_known_no_rolls":     7,
+        "tape_number_no_transfer": 8,
     }
 
     rows = db.execute("""
@@ -473,7 +390,7 @@ def print_report(db: sqlite3.Connection):
         FROM files_on_disk f
         LEFT JOIN transfer_file_matches m ON f.id = m.file_id
         WHERE f.folder_root IN ('O:/Master 1', 'O:/Master 2', 'O:/Master 3', 'O:/Master 4')
-          AND (m.file_id IS NULL OR m.match_rule = 'tape_number_no_transfer')
+          AND (m.file_id IS NULL OR m.match_rule IN ('tape_number_no_transfer'))
         ORDER BY f.folder_root, f.filename
     """).fetchall()
 
@@ -484,6 +401,22 @@ def print_report(db: sqlite3.Connection):
             print(f"    [{folder}] {fname}  ({size_str})")
     else:
         print("    (none — all tape files resolved to transfers)")
+
+    # Tapes that exist in the discovery shotlist but whose individual rolls were
+    # never linked in the spreadsheet — known content, but no roll-level mapping.
+    known_no_rolls = db.execute("""
+        SELECT f.folder_root, f.filename, f.size_bytes, m.tape_number
+        FROM files_on_disk f
+        JOIN transfer_file_matches m ON f.id = m.file_id
+        WHERE m.match_rule = 'tape_known_no_rolls'
+        ORDER BY m.tape_number, f.filename
+    """).fetchall()
+    if known_no_rolls:
+        print(f"\n  {'--- Tapes known but rolls not linked in spreadsheet ---':^50}")
+        for root, fname, size, tapeno in known_no_rolls:
+            folder = root.split("/")[-1]
+            size_str = f"{size/1024/1024/1024:.1f} GB" if size and size > 0 else "??"
+            print(f"    [{folder}] {fname}  ({size_str})  [tape {tapeno} — content not roll-mapped]")
 
     # Tapes expected by naming convention but not found on disk
     print(f"\n  {'--- Tapes expected but not on disk ---':^50}")
@@ -508,6 +441,46 @@ def print_report(db: sqlite3.Connection):
         print(f"    Total phantom tapes: {len(phantom)}")
     else:
         print("    (none — all expected tapes found on disk)")
+
+    # PV rolls in DB not found on disk
+    print(f"\n  {'--- PV rolls in DB but no file on disk ---':^50}")
+    pv_unmatched = db.execute("""
+        SELECT fr.identifier, fr.title
+        FROM film_rolls fr
+        WHERE fr.id_prefix = 'PV'
+          AND fr.identifier NOT IN (
+              SELECT DISTINCT reel_identifier
+              FROM transfer_file_matches
+              WHERE reel_identifier IS NOT NULL
+          )
+        ORDER BY fr.identifier
+    """).fetchall()
+    if pv_unmatched:
+        for ident, title in pv_unmatched:
+            print(f"    {ident:15s}  {title or '(no title)'}")
+        print(f"    Total: {len(pv_unmatched)}")
+    else:
+        print("    (none — all DB PV rolls have a file on disk)")
+
+    # Master 5 and proxy — files not matched to any DB record
+    print(f"\n  {'--- Unrecognised files (not in DB) ---':^50}")
+    unmatched_vid = db.execute("""
+        SELECT f.folder_root, f.rel_path
+        FROM files_on_disk f
+        WHERE f.folder_root IN (?, ?)
+          AND f.id NOT IN (SELECT file_id FROM transfer_file_matches)
+          AND f.extension IN ('.mov', '.mp4', '.mxf', '.mpg', '.m4v', '.ts')
+        ORDER BY f.folder_root, f.rel_path
+    """, (MASTER5_ROOT, PROXY_ROOT)).fetchall()
+    if unmatched_vid:
+        for root, rel in unmatched_vid[:40]:
+            short = root.replace("O:/", "")
+            print(f"    [{short}]  {rel}")
+        if len(unmatched_vid) > 40:
+            print(f"    ... and {len(unmatched_vid) - 40} more")
+        print(f"    Total: {len(unmatched_vid)}")
+    else:
+        print("    (none)")
 
     # has_transfer_on_disk summary
     total_rolls = db.execute("SELECT COUNT(*) FROM film_rolls").fetchone()[0]
@@ -563,23 +536,24 @@ def main():
         db.close()
         return
 
-    # Drop previous 1c tables and rebuild
+    # Prepare Stage 1c tables.
+    # files_on_disk is kept across runs (stable IDs preserve ffprobe_metadata links).
+    # transfer_file_matches is always rebuilt from scratch (pure derived data).
     print("Preparing Stage 1c tables...")
     db.execute("DROP TABLE IF EXISTS transfer_file_matches")
-    db.execute("DROP TABLE IF EXISTS files_on_disk")
     db.execute("UPDATE film_rolls SET has_transfer_on_disk = 0")
-    # Clear file paths that were backfilled by a previous 1c run (lto_copy + tape matches),
-    # but leave discovery_capture file_path (set by 1b from naming convention) intact.
+    # Clear file paths backfilled by a previous 1c run so they are re-verified.
     db.execute("""
         UPDATE transfers SET filename = NULL, file_path = NULL
         WHERE transfer_type NOT IN ('discovery_capture', 'digital_file')
     """)
     db.commit()
-    db.executescript(STAGE_1C_SCHEMA)
+    db.executescript(STAGE_1C_SCHEMA)  # CREATE TABLE IF NOT EXISTS — safe on re-run
 
     # Scan directories
     t0 = time.time()
     total_scanned = 0
+    seen_by_root: dict[str, set[str]] = {}   # root → rel_paths found this run
     for root, recursive in SCAN_ROOTS:
         if not os.path.isdir(root):
             print(f"  WARNING: {root} not accessible, skipping")
@@ -587,36 +561,57 @@ def main():
         t1 = time.time()
         mode = "" if recursive else " (top-level only)"
         print(f"Scanning {root}{mode}...", end=" ", flush=True)
-        n = scan_folder(root, db, recursive=recursive)
+        n, seen = scan_folder(root, db, recursive=recursive)
+        seen_by_root[root] = seen
         print(f"{n:,d} files ({time.time()-t1:.1f}s)")
         total_scanned += n
 
     print(f"\nTotal files scanned: {total_scanned:,d} ({time.time()-t0:.1f}s)")
 
-    # Match tape files (Masters 1-4)
-    t1 = time.time()
-    print("\nMatching tape files (Masters 1-4)...", end=" ", flush=True)
-    mf, mx = match_tape_files(db)
-    print(f"{mf:,d} files → {mx:,d} transfer links ({time.time()-t1:.1f}s)")
+    # Prune files_on_disk rows for files that have disappeared from disk.
+    # Only prune roots that were accessible this run — if a root was skipped
+    # (WARNING above) its existing records are left untouched.
+    n_pruned = 0
+    for root, seen_rels in seen_by_root.items():
+        existing = db.execute(
+            "SELECT id, rel_path FROM files_on_disk WHERE folder_root = ?", (root,)
+        ).fetchall()
+        stale_ids = [row[0] for row in existing if row[1] not in seen_rels]
+        if stale_ids:
+            db.execute(
+                f"DELETE FROM files_on_disk WHERE id IN ({','.join('?' * len(stale_ids))})",
+                stale_ids,
+            )
+            n_pruned += len(stale_ids)
+    db.commit()
+    if n_pruned:
+        print(f"Pruned {n_pruned:,d} file record(s) no longer on disk.")
 
-    # Match MPEG-2 files
+    # Match all files in a single pass
     t1 = time.time()
-    print("Matching MPEG-2 files...", end=" ", flush=True)
-    m2f, m2x, m2u = match_mpeg2_files(db)
-    print(f"{m2f:,d} files → {m2x:,d} transfer links, {m2u:,d} unmatched ({time.time()-t1:.1f}s)")
+    print("\nMatching files to transfers ...", end=" ", flush=True)
+    rule_counts = match_all_files(db)
+    total_rows = sum(rule_counts.values())
+    print(f"{total_rows:,d} match rows in {time.time() - t1:.1f}s")
+    for rule, cnt in sorted(rule_counts.items()):
+        print(f"    {rule:35s}: {cnt:,d}")
 
-    # Set has_transfer_on_disk
+    # Deduplicate: keep one row per (file_id, reel_identifier)
+    n_dedup = dedup_transfer_file_matches(db)
+    if n_dedup:
+        print(f"Removed {n_dedup:,d} duplicate match row(s).")
+
+    # Post-match DB updates
     if not args.dry_run:
         n_updated = set_has_transfer_on_disk(db)
         print(f"\nUpdated has_transfer_on_disk = 1 for {n_updated:,d} film_rolls")
 
-        # Backfill filename/file_path on transfers from matched files
         t1 = time.time()
-        print("Backfilling transfers.filename/file_path...", end=" ", flush=True)
+        print("Backfilling transfers.filename/file_path ...", end=" ", flush=True)
         n_backfill = backfill_transfer_file_paths(db)
-        print(f"{n_backfill:,d} transfers updated ({time.time()-t1:.1f}s)")
+        print(f"{n_backfill:,d} transfers updated ({time.time() - t1:.1f}s)")
     else:
-        print("\n(dry-run — has_transfer_on_disk not updated)")
+        print("\n(dry-run — DB flags and file paths not updated)")
 
     # Report
     print_report(db)

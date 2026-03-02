@@ -19,6 +19,12 @@ export interface FilmReel {
   has_transfer_on_disk: number;
   shotlist_pdfs: string | null; // JSON array of PDF filenames, or null
   rowid_excel: number | null;
+  // Fields added by First Steps / NARA ingest
+  nara_roll_number: string | null;
+  film_gauge: string | null;
+  nara_id: string | null;
+  nara_catalog_url: string | null;
+  notes: string | null;
 }
 
 /** transfers table */
@@ -40,6 +46,7 @@ export interface Transfer {
   transfer_status: string | null;
   creator: string | null;
   prime_data_tape: string | null;
+  reel_part: number | null;
 }
 
 /** files_on_disk table */
@@ -107,6 +114,26 @@ export interface DiscoveryShotlist {
   shotlist_raw: string | null;
 }
 
+/** nara_citations table */
+export interface NaraCitation {
+  id: number;
+  reel_identifier: string;
+  citation: string;
+  citation_type: string | null;
+  source_column: string | null;
+  source_sheet: string | null;
+}
+
+/** external_file_refs table */
+export interface ExternalFileRef {
+  id: number;
+  reel_identifier: string;
+  url: string;
+  ref_type: string | null;
+  filename: string | null;
+  source: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // API response shapes
 // ---------------------------------------------------------------------------
@@ -139,6 +166,8 @@ export interface ReelDetailResponse {
   fileMatches: FileMatch[];
   ffprobeData: FfprobeMetadata[];
   discoveryEntries: DiscoveryShotlist[];
+  naraCitations: NaraCitation[];
+  externalRefs: ExternalFileRef[];
 }
 
 export interface ShotlistPdfsResponse {

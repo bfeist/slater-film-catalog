@@ -18,10 +18,12 @@ Features:
     - Handles network errors gracefully (records error, continues)
 
 Usage:
-    uv run python scripts/1d_ffprobe_metadata.py              # probe all video files
-    uv run python scripts/1d_ffprobe_metadata.py --stats       # show existing stats
-    uv run python scripts/1d_ffprobe_metadata.py --retry-errors # re-probe files that errored
-    uv run python scripts/1d_ffprobe_metadata.py --timeout 180  # custom timeout (seconds)
+    uv run python scripts/1d_ffprobe_metadata.py                       # probe all video files
+    uv run python scripts/1d_ffprobe_metadata.py --stats               # show existing stats
+    uv run python scripts/1d_ffprobe_metadata.py --retry-errors        # re-probe files that errored
+    uv run python scripts/1d_ffprobe_metadata.py --timeout 180         # custom timeout (seconds)
+    uv run python scripts/1d_ffprobe_metadata.py --purge-missing       # delete stale records (re-run 1c first)
+    uv run python scripts/1d_ffprobe_metadata.py --purge-missing --dry-run  # preview without deleting
 
 ⚠️  /o/ is STRICTLY READ-ONLY — this script only reads file headers via ffprobe.
 """
@@ -197,9 +199,11 @@ def derive_quality(folder_root: str, video_codec: str | None,
 
     Returns human-friendly labels for general searching.
     """
-    # Determine tier from folder
+    # Determine tier from folder — check more-specific paths first.
     folder_lower = folder_root.lower()
-    if "master" in folder_lower:
+    if "70mm" in folder_lower or "panavision" in folder_lower:
+        tier = "nara_70mm_scan"
+    elif "master" in folder_lower:
         tier = "master"
     elif "mpeg-2" in folder_lower or "mpeg2" in folder_lower:
         tier = "mpeg2_proxy"
@@ -390,6 +394,53 @@ def upsert_probe_result(db: sqlite3.Connection, file_id: int,
 
 
 # ---------------------------------------------------------------------------
+# Purge stale records
+# ---------------------------------------------------------------------------
+
+def purge_missing(db: sqlite3.Connection, dry_run: bool = False) -> int:
+    """Delete ffprobe_metadata rows whose file_id no longer exists in files_on_disk.
+
+    This happens when 1c_verify_transfers.py is re-run and a previously-scanned
+    file was not rediscovered (e.g. a folder was removed or the share was
+    partially unavailable during the last 1c run).
+
+    With dry_run=True, prints what would be deleted without touching the DB.
+    Returns the count of rows deleted (or that would be deleted).
+    """
+    stale = db.execute("""
+        SELECT m.file_id, f_old.folder_root, f_old.filename
+        FROM ffprobe_metadata m
+        LEFT JOIN files_on_disk f_old ON f_old.id = m.file_id
+        WHERE f_old.id IS NULL
+        ORDER BY m.file_id
+    """).fetchall()
+
+    if not stale:
+        print("No stale ffprobe_metadata records found — nothing to purge.")
+        return 0
+
+    print(f"{'Would delete' if dry_run else 'Deleting'} {len(stale):,d} stale record(s):")
+    for file_id, folder_root, filename in stale[:50]:
+        folder = (folder_root or "?").split("/")[-1]
+        print(f"  file_id={file_id}  [{folder}] {filename or '(unknown)'}")
+    if len(stale) > 50:
+        print(f"  ... and {len(stale) - 50} more")
+
+    if not dry_run:
+        ids = [row[0] for row in stale]
+        db.execute(
+            f"DELETE FROM ffprobe_metadata WHERE file_id IN ({','.join('?' * len(ids))})",
+            ids,
+        )
+        db.commit()
+        print(f"Purged {len(stale):,d} stale record(s).")
+    else:
+        print("(dry-run — no records deleted)")
+
+    return len(stale)
+
+
+# ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
 
@@ -528,6 +579,10 @@ def main():
     )
     parser.add_argument("--stats", action="store_true",
                         help="Show existing stats (no probing)")
+    parser.add_argument("--purge-missing", action="store_true",
+                        help="Delete records for files no longer in files_on_disk (re-run 1c first)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="With --purge-missing: show what would be deleted without deleting")
     parser.add_argument("--retry-errors", action="store_true",
                         help="Re-probe files that previously errored")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
@@ -552,6 +607,15 @@ def main():
         print_stats(db)
         db.close()
         return
+
+    if args.purge_missing:
+        purge_missing(db, dry_run=args.dry_run)
+        db.close()
+        return
+
+    # Auto-purge ffprobe records for files removed since the last 1c run.
+    # This keeps the table consistent without requiring a manual --purge-missing.
+    purge_missing(db, dry_run=False)
 
     # Get list of files to probe
     files = get_video_files(db, retry_errors=args.retry_errors)

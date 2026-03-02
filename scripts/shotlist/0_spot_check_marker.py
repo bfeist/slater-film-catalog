@@ -11,7 +11,7 @@ import os
 import sys
 import time
 
-INPUT_DIR = "input_indexes/MASTER FR shotlist folder"
+INPUT_DIR = "static_assets/shotlist_pdfs"
 OUTPUT_DIR = "data/marker_spot_checks"
 
 # Pick a small, medium, and large PDF

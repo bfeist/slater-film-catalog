@@ -76,7 +76,15 @@ export default function ReelDetailModal({
   } else if (!data) {
     content = <div className="error-msg">No data</div>;
   } else {
-    const { reel, transfers, fileMatches, ffprobeData, discoveryEntries } = data;
+    const {
+      reel,
+      transfers,
+      fileMatches,
+      ffprobeData,
+      discoveryEntries,
+      naraCitations,
+      externalRefs,
+    } = data;
 
     const probeByFile = new Map<number, FfprobeMetadata>();
     for (const p of ffprobeData) {
@@ -100,6 +108,13 @@ export default function ReelDetailModal({
             <dt>Date</dt>
             <dd>{reel.date || "—"}</dd>
 
+            {reel.film_gauge && (
+              <>
+                <dt>Film Gauge</dt>
+                <dd>{reel.film_gauge}</dd>
+              </>
+            )}
+
             {reel.mission && (
               <>
                 <dt>Mission</dt>
@@ -114,6 +129,28 @@ export default function ReelDetailModal({
 
             <dt>Audio</dt>
             <dd>{reel.audio || "—"}</dd>
+
+            {(reel.nara_catalog_url ?? reel.nara_id) && (
+              <>
+                <dt>NARA</dt>
+                <dd>
+                  {reel.nara_catalog_url ? (
+                    <a href={reel.nara_catalog_url} target="_blank" rel="noopener noreferrer">
+                      {reel.nara_id ?? "View catalog →"}
+                    </a>
+                  ) : (
+                    reel.nara_id
+                  )}
+                </dd>
+              </>
+            )}
+
+            {reel.nara_roll_number && (
+              <>
+                <dt>NARA Roll #</dt>
+                <dd>{reel.nara_roll_number}</dd>
+              </>
+            )}
 
             <dt>On disk</dt>
             <dd>{reel.has_transfer_on_disk ? "Yes" : "No"}</dd>
@@ -137,6 +174,13 @@ export default function ReelDetailModal({
             <div className="reel-description">
               <h3>Description</h3>
               <p>{reel.description}</p>
+            </div>
+          )}
+
+          {reel.notes && (
+            <div className="reel-notes">
+              <h3>Notes</h3>
+              <p>{reel.notes}</p>
             </div>
           )}
         </section>
@@ -174,17 +218,49 @@ export default function ReelDetailModal({
           <DiscoveryEntries entries={discoveryEntries} />
         </section>
 
+        {/* ---- NARA Citations ---- */}
+        {naraCitations.length > 0 && (
+          <section className="nara-citations-section">
+            <h3>NARA Citations ({naraCitations.length})</h3>
+            <ul className="nara-citation-list">
+              {naraCitations.map((c) => (
+                <li key={c.id}>
+                  <code>{c.citation}</code>
+                  {c.citation_type && c.citation_type !== "other" && (
+                    <span className="citation-type-badge">
+                      {c.citation_type.replace(/_/g, " ")}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {/* ---- External Online Sources ---- */}
+        {externalRefs.length > 0 && (
+          <section className="ext-refs-section">
+            <h3>External Online Sources ({externalRefs.length})</h3>
+            <ul className="ext-ref-list">
+              {externalRefs.map((ref) => (
+                <li key={ref.id}>
+                  <span className="ext-ref-type">
+                    {(ref.ref_type ?? "file").replace(/_/g, " ")}
+                  </span>
+                  {" — "}
+                  <a href={ref.url} target="_blank" rel="noopener noreferrer">
+                    {ref.filename ?? ref.url}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {/* ---- Future sections ---- */}
         <section className="future-stub">
           <h3>Scene Detection</h3>
           <p className="muted">Coming soon — will show detected scene boundaries for this reel.</p>
-        </section>
-
-        <section className="future-stub">
-          <h3>Shot List References</h3>
-          <p className="muted">
-            Coming soon — will link to specific shots from parsed shot list PDFs.
-          </p>
         </section>
 
         {/* ---- Video player overlay ---- */}

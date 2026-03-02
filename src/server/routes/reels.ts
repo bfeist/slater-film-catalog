@@ -114,12 +114,34 @@ router.get("/:identifier", (req, res) => {
     )
     .all(`%${identifier}%`, `%${identifier.replace(/^FR-/, "")}%`);
 
+  // NARA citations (table added by 1b_ingest_first_steps.py migration)
+  let naraCitations: unknown[] = [];
+  try {
+    naraCitations = d
+      .prepare("SELECT * FROM nara_citations WHERE reel_identifier = ?")
+      .all(identifier);
+  } catch {
+    /* table not yet created */
+  }
+
+  // External file refs: S3 / streaming URLs not stored on local disk
+  let externalRefs: unknown[] = [];
+  try {
+    externalRefs = d
+      .prepare("SELECT * FROM external_file_refs WHERE reel_identifier = ?")
+      .all(identifier);
+  } catch {
+    /* table not yet created */
+  }
+
   res.json({
     reel,
     transfers,
     fileMatches,
     ffprobeData,
     discoveryEntries,
+    naraCitations,
+    externalRefs,
   });
 });
 

@@ -18,6 +18,7 @@ export default function TransferList({ transfers }: TransferListProps): JSX.Elem
           <tr>
             <th>Type</th>
             <th>Source Tab</th>
+            <th>Reel Pt</th>
             <th>LTO #</th>
             <th>Tape #</th>
             <th>Filename</th>
@@ -33,6 +34,7 @@ export default function TransferList({ transfers }: TransferListProps): JSX.Elem
                 <code>{t.transfer_type}</code>
               </td>
               <td>{t.source_tab || "—"}</td>
+              <td>{t.reel_part ?? "—"}</td>
               <td>{t.lto_number || "—"}</td>
               <td>{t.tape_number || "—"}</td>
               <td className="mono-cell">{t.filename || "—"}</td>

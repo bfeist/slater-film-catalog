@@ -5,6 +5,9 @@ node_modules/
 data/
 input_indexes/
 
+# Static assets (large binary files — not tracked in git)
+static_assets/
+
 # Python
 __pycache__/
 *.py[cod]

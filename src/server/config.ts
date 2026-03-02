@@ -14,7 +14,7 @@
 //   PORT                  – HTTP port (default 3001)
 //   NODE_ENV              – "production" | "development" (default "development")
 //   DB_PATH               – Absolute path to the SQLite database
-//   SHOTLIST_PDF_DIR      – Folder containing shotlist PDF scans
+//   SHOTLIST_PDF_DIR      – Folder containing shotlist PDFs (default: static_assets/shotlist_pdfs)
 //   VIDEO_ARCHIVE_ROOT    – Base path for the NASA archive video share
 //   WATERMARK_FONT_PATH   – Path to a TrueType font for ffmpeg watermark
 //   VITE_DIST_DIR         – Path to the built Vite SPA (prod: served by Express)
@@ -91,8 +91,7 @@ export const config = {
   dbPath: process.env.DB_PATH ?? fromRoot("data", "01b_excel.db"),
 
   /** Directory containing the scanned shotlist PDFs */
-  shotlistPdfDir:
-    process.env.SHOTLIST_PDF_DIR ?? fromRoot("input_indexes", "MASTER FR shotlist folder"),
+  shotlistPdfDir: process.env.SHOTLIST_PDF_DIR ?? fromRoot("static_assets", "shotlist_pdfs"),
 
   /** Root of the NASA video archive share */
   videoArchiveRoot: process.env.VIDEO_ARCHIVE_ROOT ?? defaultArchiveRoot(),
