@@ -322,8 +322,9 @@ select {
   border-top: 1px solid #eeeeee;
 }
 
-.probe-section h4 {
+.probe-section-title {
   margin-bottom: 0.3rem;
+  font-weight: 500;
 }
 
 .quality-badge {

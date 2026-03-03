@@ -48,7 +48,7 @@ export default function FileInfoCard({ file, probe, onPlay }: FileInfoCardProps)
 
       {probe && !probe.probe_error && (
         <div className="probe-section">
-          <h4>FFprobe Metadata</h4>
+          <div className="probe-section-title">File Quality Details</div>
           {probe.quality_label && <div className="quality-badge">{probe.quality_label}</div>}
           <dl className="file-info-dl">
             <dt>Format</dt>
@@ -106,7 +106,7 @@ export default function FileInfoCard({ file, probe, onPlay }: FileInfoCardProps)
         </div>
       )}
 
-      {!probe && <p className="muted">No ffprobe metadata available for this file.</p>}
+      {!probe && <p className="muted">No quality metadata available for this file.</p>}
     </div>
   );
 }

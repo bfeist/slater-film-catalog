@@ -24,7 +24,7 @@ export default function DiscoveryEntries({ entries }: DiscoveryEntriesProps): JS
             <dd>{e.description || "—"}</dd>
           </dl>
           {e.shotlist_raw && (
-            <details>
+            <details open>
               <summary>Raw shot list text</summary>
               <pre className="shotlist-raw">{e.shotlist_raw}</pre>
             </details>

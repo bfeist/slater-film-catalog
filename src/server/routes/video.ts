@@ -130,11 +130,11 @@ router.get("/:file_id/stream", (req, res) => {
   const watermark =
     `scale=1280:-2:force_original_aspect_ratio=decrease,format=yuv420p,` +
     `drawtext=fontfile='${fontEscaped}'` +
-    ":text='STEPHEN SLATER PRODUCTIONS'" +
-    ":fontsize=h/12" +
+    ":text='%{pts\\:hms}'" +
+    ":fontsize=h/10" +
     ":fontcolor=white@0.3" +
     ":x=(w-text_w)/2" +
-    ":y=(h-text_h)/2";
+    ":y=(h-text_h)/1.5";
 
   const ffmpegArgs: string[] = [];
   if (startSecs > 0) {

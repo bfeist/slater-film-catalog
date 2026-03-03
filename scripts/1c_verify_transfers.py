@@ -57,18 +57,16 @@ from matchers.filename_parser import parse_filename
 DB_PATH = "data/01b_excel.db"
 
 # Folders to scan — /o/ is READ-ONLY, we only list files.
+# (path, recursive, is_master_quality)
 SCAN_ROOTS = [
-    ("O:/Master 1", True),                               # tapes 501–562
-    ("O:/Master 2", True),                               # tapes 563–625
-    ("O:/Master 3", True),                               # tapes 626–712
-    ("O:/Master 4", True),                               # tapes 713–886
-    ("O:/Master 5/70mm Panavision Collection", True),    # NARA 70mm scans
-    ("O:/Master 5/FR-Masters", True),                    # NARA FR scans
-    ("O:/MPEG-Proxies", True),                           # all proxy subfolders
+    ("O:/Master 1",                   True,  True),   # tapes 501–562
+    ("O:/Master 2",                   True,  True),   # tapes 563–625
+    ("O:/Master 3",                   True,  True),   # tapes 626–712
+    ("O:/Master 4",                   True,  True),   # tapes 713–886
+    ("O:/70mm Panavision Collection", True,  True),   # NARA 70mm scans
+    ("O:/FR-Masters",                 True,  True),   # NARA FR scans
+    ("O:/MPEG-Proxies",               True,  False),  # all proxy subfolders
 ]
-
-MASTER5_ROOT = "O:/Master 5/70mm Panavision Collection"
-PROXY_ROOT   = "O:/MPEG-Proxies"
 
 # Tape number → Master folder mapping (for gap detection in the report).
 TAPE_FOLDER_RANGES = [
@@ -79,8 +77,9 @@ TAPE_FOLDER_RANGES = [
 ]
 
 # Placeholder/noise files to skip entirely.
+# Also skip -SAMPLE files (test/demo clips that are not real transfers).
 IGNORE_RE = re.compile(
-    r"not missing.*doesn.?t exist|doesn.?t exist.*not missing|MISSING",
+    r"not missing.*doesn.?t exist|doesn.?t exist.*not missing|MISSING|-SAMPLE",
     re.IGNORECASE,
 )
 
@@ -462,16 +461,18 @@ def print_report(db: sqlite3.Connection):
     else:
         print("    (none — all DB PV rolls have a file on disk)")
 
-    # Master 5 and proxy — files not matched to any DB record
+    # Non-tape-master and proxy folders — files not matched to any DB record
     print(f"\n  {'--- Unrecognised files (not in DB) ---':^50}")
-    unmatched_vid = db.execute("""
+    non_tape_roots = [root for root, _, _ in SCAN_ROOTS if root not in MASTER_ROOTS]
+    placeholders = ",".join("?" * len(non_tape_roots))
+    unmatched_vid = db.execute(f"""
         SELECT f.folder_root, f.rel_path
         FROM files_on_disk f
-        WHERE f.folder_root IN (?, ?)
+        WHERE f.folder_root IN ({placeholders})
           AND f.id NOT IN (SELECT file_id FROM transfer_file_matches)
           AND f.extension IN ('.mov', '.mp4', '.mxf', '.mpg', '.m4v', '.ts')
         ORDER BY f.folder_root, f.rel_path
-    """, (MASTER5_ROOT, PROXY_ROOT)).fetchall()
+    """, non_tape_roots).fetchall()
     if unmatched_vid:
         for root, rel in unmatched_vid[:40]:
             short = root.replace("O:/", "")
@@ -540,6 +541,14 @@ def main():
     # files_on_disk is kept across runs (stable IDs preserve ffprobe_metadata links).
     # transfer_file_matches is always rebuilt from scratch (pure derived data).
     print("Preparing Stage 1c tables...")
+
+    # Remove any stale SAMPLE records inserted before this filter was added.
+    sample_deleted = db.execute(
+        "DELETE FROM files_on_disk WHERE filename LIKE '%-SAMPLE%'"
+    ).rowcount
+    if sample_deleted:
+        print(f"  Purged {sample_deleted:,d} existing -SAMPLE record(s) from files_on_disk")
+        db.commit()
     db.execute("DROP TABLE IF EXISTS transfer_file_matches")
     db.execute("UPDATE film_rolls SET has_transfer_on_disk = 0")
     # Clear file paths backfilled by a previous 1c run so they are re-verified.
@@ -554,7 +563,7 @@ def main():
     t0 = time.time()
     total_scanned = 0
     seen_by_root: dict[str, set[str]] = {}   # root → rel_paths found this run
-    for root, recursive in SCAN_ROOTS:
+    for root, recursive, _is_master in SCAN_ROOTS:
         if not os.path.isdir(root):
             print(f"  WARNING: {root} not accessible, skipping")
             continue
@@ -586,6 +595,25 @@ def main():
     db.commit()
     if n_pruned:
         print(f"Pruned {n_pruned:,d} file record(s) no longer on disk.")
+
+    # Prune records for roots that are no longer in SCAN_ROOTS at all.
+    # This catches stale entries from previously-configured paths (e.g. O:/MPEG-2)
+    # that have since been removed from or reorganised out of the scan list.
+    configured_roots = {root for root, _, _ in SCAN_ROOTS}
+    db_roots = [row[0] for row in db.execute(
+        "SELECT DISTINCT folder_root FROM files_on_disk"
+    ).fetchall()]
+    n_root_pruned = 0
+    for old_root in db_roots:
+        if old_root not in configured_roots:
+            result = db.execute(
+                "DELETE FROM files_on_disk WHERE folder_root = ?", (old_root,)
+            )
+            n_root_pruned += result.rowcount
+            print(f"  Removed {result.rowcount:,d} stale record(s) for defunct root: {old_root}")
+    db.commit()
+    if n_root_pruned:
+        print(f"Pruned {n_root_pruned:,d} file record(s) from defunct scan root(s).")
 
     # Match all files in a single pass
     t1 = time.time()
