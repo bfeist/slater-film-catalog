@@ -12,7 +12,7 @@
 | `film_rolls.mission` | ~462 | Short mission names |
 | `discovery_shotlist.shotlist_raw` | 923 | Rich multi-line timecoded narratives |
 | `discovery_timecodes.description` | 4,425 | Short per-shot descriptions |
-| OCR'd shotlist PDFs | ~100 processed / 9,579 matched | Structured shot categories & subjects |
+| Shotlist PDFs (embedded text) | 9,579 matched / ~9,400 have usable text | Shot-by-shot descriptions, subjects, camera angles |
 
 **Stack:** React SPA (Vite build) + Express API server + `better-sqlite3`. In dev, Vite proxies `/api/*` to Express on port 3001. In production, Express serves the built SPA and the API from a single process. Designed for Docker deployment.
 
@@ -40,248 +40,233 @@ Semantic search maps both query and document text into a shared vector space whe
 
 ---
 
-## Options Evaluated
+## PDF Text Extraction — Embedded OCR (Preferred)
 
-### Option A: Server-Side Embeddings via sqlite-vec
+Adobe Acrobat already performed OCR on all 9,579 shotlist PDFs when they were digitized; the resulting text is embedded in each PDF and is selectable in any browser or PDF viewer. **This text can be extracted directly in seconds using PyMuPDF (`fitz`), which is already installed in the Python uv environment.**
 
-**How it works:**
+A 200-PDF random sample showed:
 
-1. **Build time (Python):** Encode all titles/descriptions with `all-MiniLM-L6-v2` → store embeddings directly in SQLite via the [sqlite-vec](https://github.com/asg017/sqlite-vec) extension
-2. **Query time (Express server):** Embed the user's query server-side using ONNX Runtime (`onnxruntime-node`), then run a single SQL query that combines vector similarity with standard SQL filters
+| Quality tier                 | Count | %   |
+| ---------------------------- | ----- | --- |
+| Rich text (>500 chars)       | 177   | 88% |
+| Minimal text (100–500 chars) | 16    | 8%  |
+| Sparse (<100 chars)          | 2     | 1%  |
+| Empty (no embedded text)     | 5     | 2%  |
+
+For the ~2% with no embedded text, marker-pdf can be run as a fallback with its `force_ocr` flag to generate fresh OCR. The output of marker — rich markdown tables with pipes, borders, and HTML tags — should be used **only as raw material for text extraction** (stripping all markup), not imported into the database as structured data.
+
+### Text cleaning for indexing
+
+PyMuPDF returns clean plain text with some OCR noise from aged typewriter characters (underscores in place of letters, `_` artifact sequences, etc.). For search indexing this noise is acceptable — embedding models are robust to it. A minimal cleaning pass before indexing:
+
+```python
+import re, fitz
+
+def extract_pdf_text(pdf_path: str) -> str:
+    doc = fitz.open(pdf_path)
+    text = "\n".join(page.get_text() for page in doc)
+    doc.close()
+    # Collapse runs of underscores/punctuation that are OCR artefacts
+    text = re.sub(r"[_=\-]{3,}", " ", text)
+    # Collapse excessive whitespace
+    text = re.sub(r"\s{3,}", "\n", text)
+    return text.strip()
+```
+
+For marker-pdf fallback (`force_ocr` on empty PDFs), strip all markdown before indexing:
+
+```python
+def clean_marker_text(markdown: str) -> str:
+    text = re.sub(r"\|", " ", markdown)           # table pipes
+    text = re.sub(r"<[^>]+>", " ", text)          # HTML tags
+    text = re.sub(r"#{1,6}\s*", "", text)          # headings
+    text = re.sub(r"\*{1,2}([^*]+)\*{1,2}", r"\1", text)  # bold/italic
+    text = re.sub(r"\s{2,}", " ", text)
+    return "\n".join(ln for ln in text.splitlines() if len(ln.strip()) > 5)
+```
+
+> **Note:** `data/01_shotlist_raw/` contains marker-pdf JSON/MD outputs from an earlier exploratory pipeline (~101 PDFs). These are not used for search indexing — they were produced for a different purpose (structured data extraction, which was abandoned as unworkable given the variety of PDF formats). The PyMuPDF approach supersedes them entirely.
+
+---
+
+## Search Architecture — Recommended Plan
+
+All search happens server-side. Results are always film roll records — the relationship between a PDF and its reel is established at index-build time. A user searching "welders painters trailers" can be shown FR-0146 even though none of those words appear in its title.
+
+### Option A: SQLite FTS5 (quick win)
 
 ```sql
-CREATE VIRTUAL TABLE film_rolls_vec USING vec0(
-    embedding float[384]
+CREATE VIRTUAL TABLE film_rolls_fts USING fts5(
+    identifier, title, description, mission, shotlist_text,
+    content='film_rolls', content_rowid='rowid'
 );
--- Query: vector similarity + SQL filters in one shot
+```
+
+`shotlist_text` is a new column populated by the index-build script with the cleaned embedded PDF text (plus discovery shotlist text). Once populated, the existing `reels.ts` search query switches from `LIKE` to `MATCH` with BM25 ranking.
+
+**Pros:** Zero new runtime dependencies; FTS5 is built into `better-sqlite3`. Instant improvement for keyword queries and identifier lookups. Easy to rebuild as more text is indexed.
+
+**Cons:** Still keyword-based. "spacewalk" won't match "EVA". No semantic understanding.
+
+**Verdict:** ✅ Implement first. Clear quick win, and FTS5 is required infrastructure for the hybrid approach anyway.
+
+### Option B: Server-Side Vector Embeddings via sqlite-vec
+
+1. **Build time (Python):** For each reel, assemble a search document (title + mission + shotlist_text + discovery text), encode with `all-MiniLM-L6-v2` → store 384-dim embedding in `film_rolls_vec` via the `sqlite-vec` extension.
+2. **Query time (Express):** Embed the user query server-side with `onnxruntime-node` (~50ms), then run a combined SQL query that joins vector nearest-neighbours with normal SQL filters.
+
+```sql
+CREATE VIRTUAL TABLE film_rolls_vec USING vec0(embedding float[384]);
+
+-- At query time:
 SELECT fr.identifier, fr.title, v.distance
 FROM film_rolls_vec v
 JOIN film_rolls fr ON fr.rowid = v.rowid
-WHERE v.embedding MATCH ?  -- bind the query vector
-  AND fr.id_prefix = 'FR'
+WHERE v.embedding MATCH ?        -- bind Float32Array query vector
 ORDER BY v.distance
 LIMIT 20;
 ```
 
-**Pros:**
+**Pros:** Handles synonym / intent queries ("spacewalk" → EVA reels). No browser-side model. Works entirely within the existing SQLite file.
 
-- Everything stays in SQLite — single database file, easy to deploy in Docker
-- Can combine vector similarity with SQL filters (prefix, date, has_transfer) in one query
-- No browser-side model download (~30 MB ONNX + ~33 MB embeddings saved)
-- Server-side ONNX inference is fast (~50ms per query) and works in Docker
-- Query results are instant — no cold-start model loading for the user
+**Cons:** Adds `onnxruntime-node` (~40 MB) and ONNX model files (~30 MB) to the server. `sqlite-vec` is a native extension that must be available in the Docker image.
 
-**Cons:**
+**Verdict:** ✅ Recommended end-state. Implement after FTS5 is working.
 
-- `sqlite-vec` is a native SQLite extension — must be compiled/installed per platform
-- Adds `onnxruntime-node` (~40 MB) to the server's `node_modules`
-- Embedding model files (~30 MB) live on the server
-- Less mature than FTS5
+### Option C: Hybrid FTS5 + Vector (best of both)
 
-**Verdict:** ✅ **Now the recommended approach.** With a real Express server and Docker deployment, the original objections ("no server") no longer apply. This gives the best UX — instant semantic results with zero client overhead.
+Run both at query time. Merge results using reciprocal rank fusion. The frontend calls one endpoint and gets a single ranked list. Keyword precision for identifiers and acronyms; semantic reach for intent queries.
 
-### Option B: SQLite FTS5 (Full-Text Search)
-
-**How it works:**
-SQLite ships with [FTS5](https://www.sqlite.org/fts5.html), a built-in full-text search engine that supports tokenized matching, BM25 ranking, prefix queries, and phrase matching.
-
-```sql
-CREATE VIRTUAL TABLE film_rolls_fts USING fts5(
-    identifier, title, description, mission,
-    content='film_rolls', content_rowid='rowid'
-);
--- Query:
-SELECT * FROM film_rolls_fts WHERE film_rolls_fts MATCH 'lunar module' ORDER BY rank;
-```
-
-**Pros:**
-
-- Near-zero added dependency (FTS5 is compiled into `better-sqlite3` by default)
-- Instant to implement — just create the virtual table and change the query
-- BM25 ranking is a massive upgrade over LIKE for relevance
-- Supports AND/OR/NOT/phrase/prefix queries
-- Works for identifier lookups too ("FR-1005")
-
-**Cons:**
-
-- Still keyword-based — "spacewalk" won't match "EVA"
-- No understanding of synonyms or intent
-- Requires `better-sqlite3` at runtime (fine for dev server, needs thought for production)
-
-**Verdict:** ✅ **Quick win to implement immediately.** Should be added regardless of whether semantic search is also added — it's the correct baseline for text search in the Express API.
-
-### Option C: Hybrid — FTS5 + Server-Side Vector Search
-
-**How it works:**
-Combine Options A and B. The Express API handles both in a single request:
-
-1. **Keyword mode (FTS5):** Fast, exact, great for identifiers and known terms
-2. **Semantic mode (sqlite-vec):** Intent-based, great for natural language questions
-
-The API endpoint merges results with reciprocal rank fusion or returns them in separate sections ("Exact matches" / "Related reels"). The frontend just calls one endpoint.
-
-**Verdict:** ✅ **Best of both worlds.** This is the recommended end-state architecture. FTS5 is a quick win; sqlite-vec layers on top — both server-side, zero client impact.
-
-### Option D: Client-Side Embeddings via transformers.js (original plan)
-
-**How it works:**
-Pre-compute embeddings at build time, ship ~33 MB of embeddings + ~30 MB ONNX model to the browser, run inference client-side.
-
-**Pros:**
-
-- Zero server load for search queries
-
-**Cons:**
-
-- ~66 MB download before semantic search works
-- Bad mobile experience
-- Now unnecessary since we have a server
-
-**Verdict:** ❌ **Superseded by Option A.** With a real Express server, there's no reason to push this cost to the client.
-
-### Option E: Pre-computed Synonym/Expansion Table
-
-**How it works:**
-At build time, use an LLM or thesaurus to expand each title into additional search terms:
-
-| Original title                 | Expanded terms                                     |
-| ------------------------------ | -------------------------------------------------- |
-| "Apollo 11 descent to surface" | lunar landing, moon landing, LM descent, touchdown |
-| "EVA 1 site preparation"       | spacewalk, extravehicular activity, moonwalk       |
-
-Store expansions in a `search_terms` FTS5 table. Keyword search automatically hits synonyms.
-
-**Pros:**
-
-- No runtime model needed
-- Works with FTS5 (no new runtime dependency)
-- Can be very targeted for NASA/space domain vocabulary
-
-**Cons:**
-
-- Build-time LLM cost for 43K rows (one-time, ~$2-5 with GPT-4o-mini)
-- Expansion quality is uneven — need manual review for key terms
-- Doesn't generalize to arbitrary queries the way embeddings do
-
-**Verdict:** ⚠️ **Good complement to FTS5 but not a replacement for real semantic search.** Worth considering as an enhancement if client-side model loading is a concern.
+**Verdict:** ✅ This is the target architecture. FTS5 and vector search complement each other — one excels where the other fails.
 
 ---
 
-## Recommended Implementation Plan
+## UX: Showing Results Matched via Shotlist Text
 
-### Phase 1: FTS5 (days, not weeks)
+When a search term is found in a shotlist PDF but not in the reel's title, the result list shows the film roll as normal — title, identifier, date. The user typed something that isn't visible in what they're seeing.
 
-1. Add an FTS5 virtual table to the SQLite ingest script (1b or a new 1f):
-   ```sql
-   CREATE VIRTUAL TABLE IF NOT EXISTS film_rolls_fts USING fts5(
-       identifier, title, description, mission,
-       content='film_rolls', content_rowid='rowid'
-   );
-   INSERT INTO film_rolls_fts(film_rolls_fts) VALUES('rebuild');
-   ```
-2. Update `src/server/routes/reels.ts` — when `q` is present, use FTS5 MATCH with BM25 ranking instead of LIKE.
-3. No frontend changes needed (same API shape, just better results).
+**Options, roughly ordered by implementation cost:**
 
-**Effort:** ~2 hours. Immediate quality-of-life improvement.
+1. **Do nothing (acceptable baseline).** The result appears in the list. Users familiar with the domain will understand that a reel can contain subjects not reflected in its title. The ranking signal is the important thing — a reel whose shotlist contains "welders painters" should rank above an unrelated reel.
 
-### Phase 2: Server-Side Semantic Search (1-2 weeks)
+2. **Match source badge.** Add a small pill/tag to each result card: `matched in shotlist` vs `matched in title`. The API already knows which field drove the match — in FTS5 this comes from `highlight()` or `snippet()` auxiliary functions; in vector search it's derivable from whether the title alone scored high. Low frontend cost; high user transparency.
 
-1. **Adapt `scripts/6_build_search_index.py`** to read from SQLite and write embeddings back into the DB:
-   - Extract `title`, `description`, `discovery shotlist_raw`, etc. from the database
-   - Concatenate available text per reel into a search document
-   - Generate embeddings with `all-MiniLM-L6-v2`
-   - Store embeddings in a `film_rolls_vec` table via sqlite-vec
+3. **Snippet / highlight.** Use FTS5's `snippet(film_rolls_fts, column_index, '<b>', '</b>', '…', 8)` to return a context excerpt around the matched term. The API includes this in the result object; the UI renders it as a grey subline under the title. Users see exactly what triggered the match. **This is the highest-value UX improvement for the lowest engineering cost once FTS5 is in place.**
 
-2. **Add ONNX inference to the Express server:**
-   - `npm install onnxruntime-node`
-   - Download the ONNX model for `all-MiniLM-L6-v2` (~30 MB) into `data/models/`
-   - Create `src/server/services/embeddings.ts` — loads model once, provides `embed(text) → Float32Array`
+4. **Shotlist preview panel.** Clicking a result opens an inline accordion showing the first few lines of the raw shotlist text. Goes well with the existing PDF viewer.
 
-3. **Add `/api/search` endpoint** in `src/server/routes/search.ts`:
-   - Accepts `q` (query text), plus optional filters (prefix, has_transfer, etc.)
-   - Embeds the query server-side (~50ms)
-   - Runs sqlite-vec similarity search combined with FTS5 keyword search
-   - Returns merged, ranked results
+**Recommendation:** Start with option 1 (ship it, see if users complain), plan for option 3 (FTS5 snippet) in the same sprint as FTS5 since the infrastructure is free.
 
-4. **Update the frontend** to call the new unified search endpoint.
+---
 
-**Docker considerations:**
+## Implementation Plan
 
-- sqlite-vec ships as a prebuilt `.so`/`.dll` — install via `npm install sqlite-vec`
-- ONNX Runtime has prebuilt binaries for linux-x64 (Docker) and win32-x64 (dev)
-- Model files can be baked into the Docker image or volume-mounted
+### Phase 1: FTS5 + Shotlist Text Column (1-2 days)
 
-### Phase 3: Enrichment (ongoing)
+1. **`scripts/1f_build_fts_index.py`** (new):
+   - For each reel with `has_shotlist_pdf = 1`, extract text from all matched PDFs using PyMuPDF; apply cleaning pass
+   - For reels with no embedded PDF text (~2%), run marker `force_ocr` to generate text and strip markdown
+   - Write cleaned text to `film_rolls.shotlist_text` (new TEXT column, `ALTER TABLE ... ADD COLUMN`)
+   - Also pull `discovery_shotlist.shotlist_raw` for any matched identifiers and append
+   - Create `film_rolls_fts` virtual table over `(identifier, title, description, mission, shotlist_text)`
+   - Run `INSERT INTO film_rolls_fts(film_rolls_fts) VALUES('rebuild')`
 
-- Process remaining ~9,479 shotlist PDFs → dramatically richer search corpus
-- Concatenate shotlist text into reel descriptions before embedding
-- Consider LLM-generated summaries for reels that currently have only a title
-- Periodic index rebuilds as new data is added
+2. **`src/server/routes/reels.ts`**: when `q` is present, use `film_rolls_fts MATCH ?` with BM25 ordering instead of LIKE. Keep LIKE as fallback if FTS5 table doesn't exist.
+
+3. **Optional:** Add `snippet_text` field to API response using FTS5's `snippet()` function.
+
+### Phase 2: sqlite-vec Semantic Embeddings (1-2 days)
+
+1. **`scripts/6_build_search_index.py`** (rewrite):
+   - Read `film_rolls` + `shotlist_text` column from `catalog.db`
+   - Assemble per-reel search document: title + mission + shotlist_text (first ~512 tokens)
+   - Generate embeddings with `sentence-transformers all-MiniLM-L6-v2` (batch, GPU if available)
+   - Load `sqlite-vec` extension; write embeddings to `film_rolls_vec` table in `catalog.db`
+   - Rebuild whenever shotlist_text is updated (idempotent — just recreate the table)
+
+2. **`npm install onnxruntime-node sqlite-vec`**
+
+3. **`src/server/services/embeddings.ts`** (new):
+   - Load ONNX model once at startup from `data/models/all-MiniLM-L6-v2/`
+   - Export `embed(text: string): Promise<Float32Array>`
+
+4. **`src/server/routes/search.ts`** (new):
+   - `GET /api/search?q=&page=&limit=&has_transfer=&quality_bucket=`
+   - Runs FTS5 and vector queries in parallel; merges with reciprocal rank fusion
+   - Returns film roll records (same shape as `/api/reels`)
+   - Accepts same filter parameters as `/api/reels`
+
+### Phase 3: Enrichment (incremental, no architecture changes)
+
+As library coverage grows the index becomes richer automatically:
+
+- Re-run `1f_build_fts_index.py` as more PDFs are processed
+- Re-run `6_build_search_index.py` to regenerate embeddings
+- Consider LLM-generated one-sentence summaries for reels that still only have a title after PDF extraction
 
 ---
 
 ## Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    BUILD TIME (Python)                    │
+┌──────────────────────────────────────────────────────────┐
+│                  BUILD TIME (Python)                      │
 │                                                          │
-│  SQLite DB ──▶ Extract text ──▶ sentence-transformers    │
-│                 per reel          (all-MiniLM-L6-v2)     │
-│                                        │                 │
-│                                        ▼                 │
-│                              sqlite-vec embeddings       │
-│                              stored in catalog.db        │
-└─────────────────────────────────────────────────────────┘
+│  shotlist_pdfs/  ─▶  PyMuPDF extract  ─▶  cleaning pass  │
+│  (9,579 PDFs)                │                           │
+│                              ▼                           │
+│                  film_rolls.shotlist_text  ◀─ ALTER TABLE │
+│                      + discovery text                    │
+│                              │                           │
+│              ┌───────────────┴───────────────┐           │
+│              ▼                               ▼           │
+│       FTS5 virtual table        sentence-transformers    │
+│    film_rolls_fts (rebuild)    all-MiniLM-L6-v2 (384d)   │
+│                                              │           │
+│                                             ▼           │
+│                                  film_rolls_vec          │
+│                              (sqlite-vec in catalog.db)  │
+└──────────────────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────────────────┐
-│              RUNTIME (Express + React SPA)                │
+┌──────────────────────────────────────────────────────────┐
+│             RUNTIME (Express + React SPA)                 │
 │                                                          │
-│  Browser ──▶ React SPA (.local/vite/dist)                │
-│     │                                                    │
-│     └──▶ /api/* ──▶ Express (port 3001)                  │
-│                        │                                 │
-│                        ├── FTS5 keyword search            │
-│                        │                                 │
-│           query text ──┤                                 │
-│                        │  embed via                      │
-│                        │  onnxruntime-node               │
-│                        │        │                        │
-│                        │        ▼                        │
-│                        └── sqlite-vec similarity search   │
-│                                                          │
-│               Merge / rank ──▶ JSON response              │
-└─────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────┐
-│                    DOCKER DEPLOYMENT                      │
-│                                                          │
-│  express (serves SPA + API on one port)                   │
-│  volumes:                                                │
-│    /app/database/catalog.db  ← SQLite database            │
-│    /archive                  ← NASA video archive share   │
-└─────────────────────────────────────────────────────────┘
+│  Browser ──▶ /api/search?q=                              │
+│                    │                                     │
+│            ┌───────┴────────┐                            │
+│            ▼                ▼                            │
+│       FTS5 MATCH        embed query via                  │
+│      + BM25 rank        onnxruntime-node                 │
+│            │                │                            │
+│            │        vec_distance_cosine                  │
+│            │                │                            │
+│            └───────┬────────┘                            │
+│                    ▼                                     │
+│           reciprocal rank fusion                         │
+│                    │                                     │
+│                    ▼                                     │
+│         film roll records  ──▶  JSON response            │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Files to Change
+## Files to Create / Change
 
-| Phase | File                                                          | Change                                                    |
-| ----- | ------------------------------------------------------------- | --------------------------------------------------------- |
-| 1     | `scripts/1b_ingest_excel.py` or new `scripts/1f_build_fts.py` | Add FTS5 virtual table                                    |
-| 1     | `src/server/routes/reels.ts`                                  | Use FTS5 MATCH when `q` is present                        |
-| 2     | `scripts/6_build_search_index.py`                             | Refactor to read from SQLite, write sqlite-vec embeddings |
-| 2     | `package.json`                                                | Add `onnxruntime-node`, `sqlite-vec`                      |
-| 2     | `src/server/services/embeddings.ts` (new)                     | Server-side ONNX embedding inference                      |
-| 2     | `src/server/routes/search.ts` (new)                           | Unified search endpoint (FTS5 + vector)                   |
-| 2     | `data/models/`                                                | ONNX model files for all-MiniLM-L6-v2                     |
+| Phase | File                                        | Change                                                         |
+| ----- | ------------------------------------------- | -------------------------------------------------------------- |
+| 1     | `scripts/1f_build_fts_index.py` (new)       | PDF text extraction + FTS5 table build                         |
+| 1     | `src/server/routes/reels.ts`                | Replace LIKE with FTS5 MATCH + BM25 ordering                   |
+| 2     | `scripts/6_build_search_index.py` (rewrite) | Extract text from DB, generate embeddings, write to sqlite-vec |
+| 2     | `package.json`                              | Add `onnxruntime-node`, `sqlite-vec`                           |
+| 2     | `src/server/services/embeddings.ts` (new)   | ONNX model loader + `embed()` function                         |
+| 2     | `src/server/routes/search.ts` (new)         | `/api/search` endpoint — FTS5 + vector, merged results         |
+| 2     | `data/models/`                              | ONNX model files for all-MiniLM-L6-v2                          |
 
 ---
 
-## Key Decisions Needed
+## Key Decisions
 
-1. **Phase 1 vs Phase 2 priority?** FTS5 is quick and improves keyword search immediately. Semantic search is higher impact but more work.
-2. **sqlite-vec installation strategy?** The npm package `sqlite-vec` provides prebuilt binaries. Need to verify it works in the target Docker base image (e.g., `node:20-slim`).
-3. **Shotlist PDF processing priority?** Currently only 100/9,579 are processed. Expanding this would dramatically improve semantic search quality since titles alone are terse.
-4. **Embedding model size?** `all-MiniLM-L6-v2` (384 dims, ~30 MB ONNX) is the sweet spot. Smaller `L3` variant saves ~13 MB at some quality cost. Larger models (768 dims) double storage with marginal gains for short titles.
+1. **FTS5 snippet in search results?** The data is free once FTS5 is in place — just needs a frontend card subline. High value for user transparency when a match came from shotlist text rather than title.
+2. **sqlite-vec in Docker?** The `sqlite-vec` npm package bundles prebuilt `.so`/`.dll` binaries for linux-x64 and win32-x64. Needs verification against the target Docker base image (`node:20-slim`).
+3. **Embedding model size:** `all-MiniLM-L6-v2` (384 dims, ~30 MB ONNX) is the right choice. Larger models (768 dims) double storage with marginal gains on short-to-medium length documents.

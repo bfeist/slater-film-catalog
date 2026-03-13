@@ -15,6 +15,9 @@ Usage:
     # Process all reels that lack an alternate title
     uv run python scripts/title_gen/generate_alt_titles.py --all
 
+    # Force-regenerate titles for ALL reels (including existing titles)
+    uv run python scripts/title_gen/generate_alt_titles.py --force
+
     # Force-regenerate for specific identifiers
     uv run python scripts/title_gen/generate_alt_titles.py --ids FR-0133 FR-5315
 
@@ -50,6 +53,27 @@ MODEL = "gemma3:12b"
 _STOP_WORDS = frozenset(
     "a an and at by for from in of on or the to with is was were be".split()
 )
+
+# Matches film-roll identifiers that may be embedded in title strings.
+# Ordered most-specific first so parenthesised annotations like
+# "(FR-0046 DISCOVERY 24P HDCAM)" are consumed before the bare ID.
+_REEL_ID_RE = re.compile(
+    r'\(\s*(?:FR-[A-G]?\d+(?:-\d+)?|AK-\d+|BRF\d+[A-Z]?)'
+    r'(?:\s+[A-Z0-9][A-Z0-9\s\./]*?)?\s*\)'   # optional annotation + close paren
+    r'|FR-[A-G]?\d+(?:-\d+)?'                   # bare FR-XXXX[-N]
+    r'|AK-\d+'                                   # bare AK-NNN
+    r'|BRF\d+[A-Z]?',                            # bare BRFnnnX
+    re.IGNORECASE,
+)
+
+
+def _strip_reel_ids(text: str) -> str:
+    """Remove film-roll identifier patterns from *text* and tidy whitespace."""
+    text = _REEL_ID_RE.sub('', text)
+    text = re.sub(r'[ \t]{2,}', ' ', text)          # collapse runs of spaces
+    text = re.sub(r'\s+([,;:\)])', r'\1', text)     # remove space before punctuation
+    text = text.strip(' \t\n-.,;:')
+    return text
 
 
 def _significant_words(text: str) -> set[str]:
@@ -94,9 +118,10 @@ def ensure_column(db: sqlite3.Connection) -> None:
 
 def call_ollama(title: str) -> str:
     """Call Ollama API to generate an alternate title."""
+    clean_title = _strip_reel_ids(title)  # remove embedded identifiers before prompting
     payload = json.dumps({
         "model": MODEL,
-        "prompt": f"Rephrase this archival film title:\n{title}",
+        "prompt": f"Rephrase this archival film title:\n{clean_title}",
         "system": SYSTEM_PROMPT,
         "stream": False,
         "options": {
@@ -143,6 +168,15 @@ def fetch_all_missing(db: sqlite3.Connection) -> list[tuple[str, str]]:
     ).fetchall()
 
 
+def fetch_all_reels(db: sqlite3.Connection) -> list[tuple[str, str]]:
+    """Return all (identifier, title) pairs with a title (regardless of alternate_title status)."""
+    return db.execute(
+        """SELECT identifier, title FROM film_rolls
+           WHERE title IS NOT NULL
+           ORDER BY identifier"""
+    ).fetchall()
+
+
 def process_batch(
     db: sqlite3.Connection,
     rows: list[tuple[str, str]],
@@ -155,8 +189,13 @@ def process_batch(
     for i, (ident, title) in enumerate(rows, 1):
         try:
             alt = call_ollama(title)
+            alt = _strip_reel_ids(alt)  # strip any identifiers the LLM echoed back
+            # Use the identifier-stripped title as baseline for all comparisons so
+            # that annotation tokens (e.g. "FR", "0046", "DISCOVERY") don't skew
+            # word-count or overlap checks.
+            clean_orig = _strip_reel_ids(title)
             # Validation 1: reject if notably longer than original
-            orig_words = len(title.split())
+            orig_words = len(clean_orig.split())
             alt_words = len(alt.split())
             if alt_words > orig_words * 1.3 + 3:
                 print(f"  [{i}/{len(rows)}] {ident}: REJECTED (too wordy: {orig_words}→{alt_words} words)")
@@ -166,7 +205,7 @@ def process_batch(
                 continue
 
             # Validation 2: reject hallucinations — must share significant words
-            orig_sig = _significant_words(title)
+            orig_sig = _significant_words(clean_orig)
             alt_sig = _significant_words(alt)
             if orig_sig and alt_sig:
                 overlap = len(orig_sig & alt_sig) / len(orig_sig)
@@ -203,6 +242,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate alternate reel titles via Ollama")
     parser.add_argument("--sample", type=int, default=50, help="Number of random titles to process (default: 50)")
     parser.add_argument("--all", action="store_true", help="Process ALL reels missing an alternate title")
+    parser.add_argument("--force", action="store_true", help="Force-regenerate titles for ALL reels (including existing titles)")
     parser.add_argument("--ids", nargs="+", help="Process specific reel identifiers")
     parser.add_argument("--dry-run", action="store_true", help="Print results without writing to DB")
     args = parser.parse_args()
@@ -217,6 +257,9 @@ def main() -> None:
     if args.ids:
         rows = fetch_by_ids(db, args.ids)
         print(f"Processing {len(rows)} specified reels...")
+    elif args.force:
+        rows = fetch_all_reels(db)
+        print(f"Processing all {len(rows)} reels (force mode)...")
     elif args.all:
         rows = fetch_all_missing(db)
         print(f"Processing all {len(rows)} reels missing alternate titles...")

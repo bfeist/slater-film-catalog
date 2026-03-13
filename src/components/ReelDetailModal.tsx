@@ -98,8 +98,11 @@ export default function ReelDetailModal({
         {/* ---- Reel header ---- */}
         <section className="reel-header-section">
           <h2>{reel.identifier}</h2>
-          {reel.title && <p className="reel-title">{reel.title}</p>}
-          {reel.orig_title && reel.orig_title !== reel.title && (
+          {(() => {
+            const displayTitle = revealed ? reel.title : (reel.alternate_title ?? reel.title);
+            return displayTitle ? <p className="reel-title">{displayTitle}</p> : null;
+          })()}
+          {revealed && reel.orig_title && reel.orig_title !== reel.title && (
             <p className="muted">Original title: {reel.orig_title}</p>
           )}
 
