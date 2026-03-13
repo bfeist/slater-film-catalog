@@ -37,7 +37,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-DB_PATH = "data/01b_excel.db"
+DB_PATH = "database/catalog.db"
 
 # Video extensions to probe (lowercase, with dot).
 VIDEO_EXTENSIONS = {".mov", ".mpg", ".mp4", ".mxf", ".m4v", ".ts", ".avi", ".mkv"}

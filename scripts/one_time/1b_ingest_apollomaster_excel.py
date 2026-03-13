@@ -12,7 +12,7 @@ Data model:
                     Each tape contains multiple FR-numbered film rolls.
 
 Outputs:
-    data/01b_excel.db  — single SQLite file
+    database/catalog.db  — single SQLite file
 
 Usage:
     uv run python scripts/1b_ingest_excel.py              # full ingest
@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 EXCEL_PATH = "input_indexes/ApolloReelsMaster.xlsx"
-DB_PATH = "data/01b_excel.db"
+DB_PATH = "database/catalog.db"
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS film_rolls (
     mission         TEXT,                    -- Mission name (from MOCR, if known)
     has_shotlist_pdf INTEGER DEFAULT 0,       -- 1 if matching PDF exists in shotlist folder
     has_transfer_on_disk INTEGER DEFAULT 0,   -- 1 if verified file exists on /o/ (set by Stage 1c)
-    rowid_excel     INTEGER                  -- 1-based row in Master List sheet
+    rowid_excel     INTEGER,                 -- 1-based row in Master List sheet
+    alternate_title TEXT                      -- LLM-rephrased title (set by title_gen)
 );
 
 CREATE INDEX IF NOT EXISTS idx_fr_prefix ON film_rolls(id_prefix);

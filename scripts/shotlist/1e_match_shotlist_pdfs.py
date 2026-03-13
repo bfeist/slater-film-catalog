@@ -26,7 +26,7 @@ import sys
 from collections import defaultdict
 
 PDF_DIR = "static_assets/shotlist_pdfs"
-DB_PATH = "data/01b_excel.db"
+DB_PATH = "database/catalog.db"
 
 
 # ---------------------------------------------------------------------------

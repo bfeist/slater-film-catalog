@@ -5,6 +5,9 @@ node_modules/
 data/
 input_indexes/
 
+# SQLite catalog database
+database/
+
 # Static assets (large binary files — not tracked in git)
 static_assets/
 

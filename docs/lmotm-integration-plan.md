@@ -120,7 +120,7 @@ import sqlite3
 import xlrd
 from datetime import datetime
 
-DB_PATH = "data/01b_excel.db"
+DB_PATH = "database/catalog.db"
 LMOTM_PATH = "input_indexes/LMOTM LTO.xls"
 
 def convert_excel_serial_date(serial_str: str) -> str | None:
@@ -251,7 +251,7 @@ Add LMOTM-specific columns to existing database.
 
 import sqlite3
 
-DB_PATH = "data/01b_excel.db"
+DB_PATH = "database/catalog.db"
 
 def migrate():
     db = sqlite3.connect(DB_PATH)
@@ -392,7 +392,7 @@ DELETE FROM transfers WHERE source_tab = 'lmotm_lto';
 
 - `scripts/1b_ingest_excel.py` - Add LMOTM to manifest/stats
 - `scripts/1c_verify_transfers.py` - Include LMOTM in verification
-- `data/01b_excel.db` - Updated schema + data
+- `database/catalog.db` - Updated schema + data
 
 ---
 

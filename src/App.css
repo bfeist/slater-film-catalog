@@ -184,6 +184,40 @@ select {
   white-space: nowrap;
 }
 
+.reel-title-revealed {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.reel-title-revealed > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.reel-alt-title-btn {
+  flex-shrink: 0;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #888;
+  border: 1px solid #555;
+  border-radius: 3px;
+  padding: 1px 4px;
+  cursor: default;
+  user-select: none;
+  line-height: 1.4;
+}
+
+.reel-alt-title-btn:hover {
+  color: #ccc;
+  border-color: #999;
+}
+
 .reel-table-empty {
   text-align: center;
   color: #888888;

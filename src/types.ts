@@ -32,6 +32,7 @@ export interface FilmReel {
   nara_id: string | null;
   nara_catalog_url: string | null;
   notes: string | null;
+  alternate_title: string | null;
 }
 
 /** transfers table */

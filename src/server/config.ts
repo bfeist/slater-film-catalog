@@ -88,7 +88,7 @@ export const config = {
   port: parseInt(process.env.PORT ?? "3001", 10),
 
   /** Path to the SQLite catalog database */
-  dbPath: process.env.DB_PATH ?? fromRoot("data", "01b_excel.db"),
+  dbPath: process.env.DB_PATH ?? fromRoot("database", "catalog.db"),
 
   /** Directory containing the scanned shotlist PDFs */
   shotlistPdfDir: process.env.SHOTLIST_PDF_DIR ?? fromRoot("static_assets", "shotlist_pdfs"),

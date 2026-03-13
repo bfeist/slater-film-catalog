@@ -2,7 +2,9 @@
 
 ## Overview
 
-This project builds a comprehensive searchable catalog for tens of thousands of hours of archival US space program video. The system runs entirely locally on an RTX 4090 GPU and produces a client-side-searchable JSON catalog — no backend server or database required.
+This project builds a comprehensive searchable catalog for tens of thousands of hours of archival US space program video. The system runs entirely locally (RTX 4090 GPU for AI processing) and consists of an Express backend serving a React SPA with SQLite as the data store. The ingestion pipeline populates `database/catalog.db` from source data; the web server exposes it via API.
+
+**Pipeline stages 0 through 1e are complete.** Stage 2 and beyond are future work.
 
 ## Current State of Source Material
 
@@ -195,9 +197,9 @@ All scripts live in `/scripts/` and are numbered to reflect pipeline stages. All
 
 ### Stage 0: Spot Check & Validation (DONE)
 
-**Script**: `scripts/0_spot_check_marker.py`
+**Scripts**: `scripts/shotlist/0_spot_check_marker.py`, `0b_compare_ocr_approaches.py`, `0c_spot_check_100.py`, `0d_vlm_fallback_test.py`, `0e_vlm_quant_benchmark.py`
 
-Validates marker-pdf OCR quality on representative PDFs.
+Validated marker-pdf OCR quality on representative PDFs. Benchmarked VLM fallback approaches. Results: marker-pdf with `force_ocr` is right for Stage 1; local VLMs hallucinate on historical docs. Full results in [`docs/done/spot-check-100-report.md`](done/spot-check-100-report.md).
 
 ### Stage 1: Ingest Existing Shot List PDFs
 
@@ -212,61 +214,56 @@ Batch-process all 10,590 FR shot list PDFs through marker-pdf:
 - Incremental: skip already-processed PDFs on re-run
 - Estimated time: ~15s/PDF average × 10,590 PDFs ≈ **44 hours** (single worker on RTX 4090)
 
-### Stage 1b: Ingest Excel Spreadsheet Data
+### Stage 1b: Ingest Excel Spreadsheet Data (DONE)
 
-**Script**: `scripts/1b_ingest_excel.py`
+**Script**: `scripts/one_time/1b_ingest_apollomaster_excel.py`
 
-Parse all 5 tabs of `input_indexes/ApolloReelsMaster.xlsx` into a **SQLite database**. The source Excel is 24 MB and has 43,271+ rows — JSON would inflate this significantly due to repeated key names on every row. SQLite keeps the interim data compact (~5–10 MB expected), queryable, and zero-infrastructure:
+Parse all 5 tabs of `input_indexes/ApolloReelsMaster.xlsx` into a **SQLite database**. The source Excel is 24 MB and has 43,271+ rows — JSON would inflate this significantly due to repeated key names on every row. SQLite keeps the interim data compact (~12 MB), queryable, and zero-infrastructure:
 
 - **film_rolls** table (43,269 rows): Content definition — identifier, title, date, feet, minutes, audio, description, mission. Enriched by MOCR (cleaner titles, feet/minutes/audio) and Apollo 17 (titles, descriptions, feet/minutes/audio) content metadata. Includes `has_shotlist_pdf` flag (set during ingest by matching against PDFs on disk) and `has_transfer_on_disk` flag (set later by Stage 1c directory crawl).
 - **transfers** table (~12,687 rows): Known physical/digital instances of each film roll — LTO copies, HD dubs, Discovery tape captures, VRDS refs, digital files. Includes `creator` and `prime_data_tape` for Apollo 17 transfers.
 - **discovery_shotlist** / **discovery_timecodes** tables: Timecoded shot descriptions for compilation tapes.
 - **\_manifest** table: processing metadata and timestamp.
 
-- Output: `data/01b_excel.db` (single SQLite file)
+- Output: `database/catalog.db` (single SQLite file)
 
-Why SQLite over JSON for this stage:
+Additional one-time scripts in `scripts/one_time/`: `1b_backfill_discovery_transfers.py` (backfills discovery captures), `1b_ingest_first_steps.py` (First Steps scanning project), `1b_download_nara_shotlists.py` (NARA shotlist PDFs), `nara_scraper/nara_scraper.py` (NARA catalog metadata).
 
-- **Size**: ~12 MB vs. ~50–80 MB as JSON (key names repeated 43K times)
-- **Queryable**: downstream stages can `SELECT` only the columns/rows they need instead of loading everything into memory
-- **Atomic writes**: no partial-write corruption risk across multiple files
-- **Still portable**: single file, no server, `sqlite3` available everywhere
-- JSON remains the output format for the final catalog (Stage 5+) where per-reel files are small and browser-loadable
+### Stage 1c: Directory Crawl & Transfer Verification (DONE)
 
-### Stage 1c: Directory Crawl & Transfer Verification
+**Script**: `scripts/1c_verify_transfers.py`
 
-**Script**: `scripts/1c_verify_transfers.py` (not yet written)
+Scans `/o/` (READ-ONLY) to build a filename inventory, then matches filenames to film_roll identifiers using a two-module matcher pipeline (`matchers/filename_parser.py` extracts candidate IDs, `matchers/db_resolve.py` looks them up). Full results in [`docs/done/1c-transfer-verification-report.md`](done/1c-transfer-verification-report.md).
 
-Scan `/o/` (READ-ONLY) to build a filename inventory across all folder structures, then match filenames back to film_roll identifiers to set `has_transfer_on_disk = 1`.
+**Output**: `files_on_disk` and `transfer_file_matches` tables in `database/catalog.db`; `film_rolls.has_transfer_on_disk` flag set; `transfers.filename` and `transfers.file_path` backfilled.
+
+**Incremental updates**: Use `--incremental` flag to scan only for new files and match them without rebuilding the full table. Run `1d_ffprobe_metadata.py` after to probe newly discovered files.
+
+```
+uv run python scripts/1c_verify_transfers.py              # full rebuild
+uv run python scripts/1c_verify_transfers.py --incremental # new files only
+uv run python scripts/1c_verify_transfers.py --stats       # show existing stats
+```
 
 > **⚠️ CRITICAL: The `/o/` network share is STRICTLY READ-ONLY.**
-> Only read operations (directory listing, stat) are permitted.
 
-This is the bridge between "the spreadsheet says a transfer exists" and "we can confirm the file is actually on disk".
+### Stage 1d: ffprobe Metadata Extraction (DONE)
 
-#### Matching challenges
+**Script**: `scripts/1d_ffprobe_metadata.py`
 
-Filename-to-identifier matching is non-trivial because naming conventions vary across folder structures:
+Runs `ffprobe` on every video file in `files_on_disk` and stores codec/format/duration/resolution in the `ffprobe_metadata` table. Already incremental — skips files already probed. Re-probe errors with `--retry-errors`. Update after new files are discovered by running 1c with `--incremental`.
 
-- **Master Tapes** (`/o/Master 1-4/`): Named by tape number (`Tape 508 - Self Contained.mov`), not by film roll identifier. One tape file contains many film rolls. Must cross-reference via `transfers.tape_number` and the naming convention (tapes 501–562 = Master 1, 563–625 = Master 2, 626–712 = Master 3, 713–886 = Master 4).
-- **MPEG-2 proxies** (`/o/MPEG-2/`): Some have embedded FR numbers (`L000881_FR-0001.mpg`), others are tape-level only (`L000881.mpg`). Must parse L-number and match via `transfers.lto_number`.
-- **Stephen_2025** (`/o/Stephen_2025/`): Named with `255-S-NNNN` pattern. Must match against film_rolls identifiers or develop a new mapping.
-- **Master 5** (`/o/Master 5/`): 14,980 files in Apollo mission subdirectories. Naming patterns vary widely — will need heuristic matching.
+```
+uv run python scripts/1d_ffprobe_metadata.py           # probe all (skips existing)
+uv run python scripts/1d_ffprobe_metadata.py --stats   # show existing stats
+uv run python scripts/1d_ffprobe_metadata.py --retry-errors
+```
 
-#### Approach
+### Stage 1e: Match Shotlist PDFs (DONE)
 
-1. Walk all directories on `/o/`, collect `(path, filename, size_bytes, mtime)` into a `files_on_disk` table in the SQLite database
-2. Apply a series of matching rules (exact identifier match, L-number match, tape-number match, regex extraction of FR numbers from filenames)
-3. For each confirmed match, set `film_rolls.has_transfer_on_disk = 1`
-4. Log unmatched files and unmatched transfers for manual review
-5. Store match confidence / match rule used for auditability
+**Script**: `scripts/shotlist/1e_match_shotlist_pdfs.py`
 
-#### Output
-
-- Updates `film_rolls.has_transfer_on_disk` in `data/01b_excel.db`
-- Adds `files_on_disk` table to the database (full directory listing)
-- Adds `transfer_file_matches` table linking transfers to confirmed files
-- Prints summary: matched transfers, unmatched files, coverage statistics
+Matches the 10,590 shotlist PDFs in `static_assets/shotlist_pdfs/` to `film_rolls` records and sets `has_shotlist_pdf = 1`.
 
 ### Stage 2: Parse & Normalize Shot List Data
 
@@ -294,24 +291,9 @@ Convert raw marker-pdf markdown/JSON output into structured shot list records:
   }
   ```
 
-### Stage 3: Video File Discovery & Registration
+### Stage 3: Video File Discovery & Registration (SUPERSEDED)
 
-**Script**: `scripts/3_discover_videos.py`
-
-Scan the network share to build a registry of all video files:
-
-> **⚠️ CRITICAL: The `/o/` network share is STRICTLY READ-ONLY.**
-> Scripts must NEVER write, delete, or modify any files on `/o/`. Only read operations (listing, stat, ffprobe, frame extraction to local `data/` directory) are permitted.
-
-- Walk directory tree on `/o/`, collect: path, filename, size, modification date
-- **Run `ffprobe -v quiet -print_format json -show_format -show_streams`** on every video file and store the full JSON output — this preserves all technical metadata (codec, bitrate, resolution, frame rate, color space, audio channels, etc.) per file
-- Derive a human-readable **quality tier** label from the ffprobe data for general searching (see Source Quality Tracking below)
-- Extract FR number from filename where possible
-- Map DiscoveryShotList tape numbers to actual files (e.g., `Tape 508` → `/o/Master 1/Tape 508 - Self Contained.mov`)
-- Map L-numbers from Master List `VideoFile` column to files in `/o/MPEG-2/` (e.g., `L000881/AK-001` → `/o/MPEG-2/L000881.mpg`)
-- Link to existing shot list data from Stage 2 and Excel data from Stage 1b
-- Output: `data/03_video_registry.json`
-- Incremental: detect new/changed files since last scan
+> **This stage was factored into 1c (file discovery + transfer matching) and 1d (ffprobe metadata) which are both complete.** See those stages above. The `files_on_disk` and `ffprobe_metadata` tables in `database/catalog.db` contain the inventory and technical metadata originally envisioned here.
 
 ### Stage 4: Video Scene Analysis (GPU-Intensive)
 
@@ -393,18 +375,11 @@ Combine all data sources into a unified catalog:
 - Flag gaps: videos with no shot list, shot lists with no matching video
 - Output: `data/05_catalog/{FR-XXXX}.json` — one comprehensive record per reel
 
-### Stage 6: Face Identification (Deferred/Incremental)
+### Stage 6: Build Search Index (PARTIAL)
 
-**Script**: `scripts/6_identify_faces.py`
+**Script**: `scripts/6_build_search_index.py` (exists; semantic search extension planned)
 
-When reference photos become available:
-
-- Ingest reference photos of astronauts and historical figures
-- Extract embeddings from reference photos (same model as Stage 4d)
-- Compare stored face embeddings against reference set
-- Assign tentative identities above a confidence threshold
-- Store reference embeddings in `data/06_face_references/`
-- This step can be re-run as new reference photos are added — it only updates identity labels, never re-scans video
+See [`docs/semantic-search-research.md`](semantic-search-research.md) for the full plan. Current script handles keyword/faceted indexing. Vector search with sqlite-vec is the planned next step.
 
 ### Stage 7: Build Search Index
 
@@ -620,12 +595,11 @@ Every stage is designed to be re-runnable and incremental:
 ## Data Directory Structure
 
 ```
+database/
+└── catalog.db                  # SQLite catalog (film_rolls, transfers,
+                            #   files_on_disk, ffprobe_metadata, ...)
 data/
 ├── 01_shotlist_raw/          # Raw marker-pdf output per PDF
-│   ├── FR-0001.json
-│   ├── FR-0001.md
-│   └── _manifest.json
-├── 01b_excel.db                # Parsed Excel data (SQLite)
 ├── 02_shotlists_parsed/      # Normalized shot list records
 │   ├── FR-0001.json
 │   └── _manifest.json
@@ -672,9 +646,10 @@ The bottleneck is Stage 4 (video analysis). For tens of thousands of hours, this
 
 ## Next Steps
 
-1. **Stage 1b**: Ingest ApolloReelsMaster.xlsx (quick win — structured data, minutes of work)
-2. **Stage 1**: Batch-process all shotlist PDFs through marker-pdf (~22 hours GPU time)
-3. **Stage 2**: Build the shot list parser (will need user input on document format nuances)
-4. Discuss existing catalog information in detail (user mentioned "a lot of nuance")
-5. **Stage 3**: Set up video discovery on `/o/` (READ-ONLY scan of network share)
-6. Evaluate vision-language models for Stage 4c and multimodal LLM backup for Stage 1
+1. ~~**Stage 1b**: Ingest ApolloReelsMaster.xlsx~~ **DONE**
+2. **Stage 1** (PDF OCR): Batch-process all shotlist PDFs through marker-pdf (~44 hours GPU time) — partially done
+3. **Stage 1e** (shotlist matching): `1e_match_shotlist_pdfs.py` — PDF-to-film_roll matching DONE
+4. ~~**Stage 3**: Set up video discovery on `/o/`~~ **DONE** (1c + 1d)
+5. **Stage 2**: Build the shot list parser (will need user input on document format nuances)
+6. Discuss existing catalog information in detail (user mentioned "a lot of nuance")
+7. Evaluate vision-language models for Stage 4c and multimodal LLM backup for Stage 1

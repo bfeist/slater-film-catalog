@@ -72,8 +72,34 @@ export default function ReelTable({
                 </td>
               )}
               <td>{r.slater_number}</td>
-              <td className="reel-title-cell" title={r.title ?? ""}>
-                {r.title ? (r.title.length > 80 ? r.title.slice(0, 80) + "…" : r.title) : "—"}
+              <td className="reel-title-cell">
+                {revealed ? (
+                  <span className="reel-title-revealed">
+                    <span title={r.title ?? ""}>
+                      {r.title
+                        ? r.title.length > 80
+                          ? r.title.slice(0, 80) + "…"
+                          : r.title
+                        : "—"}
+                    </span>
+                    {r.alternate_title && (
+                      <span
+                        className="reel-alt-title-btn"
+                        title={`Alt: ${r.alternate_title}`}
+                        aria-label="Alternate title"
+                      >
+                        alt
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  <span title={r.alternate_title ?? r.title ?? ""}>
+                    {(() => {
+                      const t = r.alternate_title ?? r.title;
+                      return t ? (t.length > 80 ? t.slice(0, 80) + "…" : t) : "—";
+                    })()}
+                  </span>
+                )}
               </td>
               <td>{r.date || "—"}</td>
               <td>

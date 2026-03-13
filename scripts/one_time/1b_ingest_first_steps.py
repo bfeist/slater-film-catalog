@@ -43,7 +43,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 
 EXCEL_PATH = os.path.join(PROJECT_ROOT, "input_indexes/First Steps - Master Scanning List.xlsx")
-DB_PATH = os.path.join(PROJECT_ROOT, "data/01b_excel.db")
+DB_PATH = os.path.join(PROJECT_ROOT, "database/catalog.db")
 
 SHEET_PV = "Project 1 - NARA Panavision Col"
 SHEET_VENUE = "Project 1 - NARA Special Venue "   # trailing space in actual sheet name
@@ -104,7 +104,8 @@ def apply_migrations(db: sqlite3.Connection) -> None:
     db.executescript(MIGRATION_SQL)
 
     existing_fr_cols = {row[1] for row in db.execute("PRAGMA table_info(film_rolls)")}
-    for col, typedef in NEW_FILM_ROLL_COLUMNS:
+    all_new_cols = list(NEW_FILM_ROLL_COLUMNS) + [("alternate_title", "TEXT")]
+    for col, typedef in all_new_cols:
         if col not in existing_fr_cols:
             db.execute(f"ALTER TABLE film_rolls ADD COLUMN {col} {typedef}")
             print(f"  [migration] film_rolls += {col}")

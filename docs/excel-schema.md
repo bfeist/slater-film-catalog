@@ -1,7 +1,7 @@
 # ApolloReelsMaster.xlsx — Schema Reference
 
 Source file: `input_indexes/ApolloReelsMaster.xlsx` (24 MB)
-Ingested into: `data/01b_excel.db` (12 MB SQLite)
+Ingested into: `database/catalog.db` (12 MB SQLite)
 
 ---
 

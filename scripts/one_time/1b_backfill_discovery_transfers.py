@@ -1,5 +1,5 @@
 """
-Stage 1b (backfill): Add missing discovery_capture transfers to 01b_excel.db.
+Stage 1b (backfill): Add missing discovery_capture transfers to catalog.db.
 
 Two gap types are fixed:
 
@@ -24,7 +24,7 @@ import argparse
 import re
 import sqlite3
 
-DB_PATH = "data/01b_excel.db"
+DB_PATH = "database/catalog.db"
 
 # Matches FR-9537, FR_9537, FR9537 (3-5 digit number)
 FR_PATTERN = re.compile(r"\bFR[-_]?(\d{3,5})\b", re.IGNORECASE)
@@ -132,7 +132,7 @@ def apply_transfers(db: sqlite3.Connection, missing: list[dict]) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Backfill missing discovery_capture transfers in 01b_excel.db"
+        description="Backfill missing discovery_capture transfers in catalog.db"
     )
     parser.add_argument(
         "--apply",

@@ -231,7 +231,7 @@ Store expansions in a `search_terms` FTS5 table. Keyword search automatically hi
 │                                        │                 │
 │                                        ▼                 │
 │                              sqlite-vec embeddings       │
-│                              stored in 01b_excel.db      │
+│                              stored in catalog.db        │
 └─────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────┐
@@ -258,7 +258,7 @@ Store expansions in a `search_terms` FTS5 table. Keyword search automatically hi
 │                                                          │
 │  express (serves SPA + API on one port)                   │
 │  volumes:                                                │
-│    /app/data/01b_excel.db    ← SQLite database            │
+│    /app/database/catalog.db  ← SQLite database            │
 │    /archive                  ← NASA video archive share   │
 └─────────────────────────────────────────────────────────┘
 ```

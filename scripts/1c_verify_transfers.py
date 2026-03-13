@@ -3,7 +3,7 @@ Stage 1c: Directory crawl & transfer verification.
 
 Scans /o/ Master folders and proxy directories (READ-ONLY) to build a file
 inventory, then matches discovered files against the transfers table in
-01b_excel.db.
+database/catalog.db.
 
 Currently scans:
     /o/Master 1/        (tapes 501–562)
@@ -33,6 +33,7 @@ filename_parser.py, never this file.
 
 Usage:
     uv run python scripts/1c_verify_transfers.py              # full scan
+    uv run python scripts/1c_verify_transfers.py --incremental # new files only
     uv run python scripts/1c_verify_transfers.py --dry-run    # report only
     uv run python scripts/1c_verify_transfers.py --stats      # show existing stats
 
@@ -54,7 +55,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from matchers.db_resolve import ResolvedMatch, resolve
 from matchers.filename_parser import parse_filename
 
-DB_PATH = "data/01b_excel.db"
+DB_PATH = "database/catalog.db"
 
 # Folders to scan — /o/ is READ-ONLY, we only list files.
 # (path, recursive, is_master_quality)
@@ -201,8 +202,12 @@ def scan_folder(
 # Matching — single unified pass
 # ---------------------------------------------------------------------------
 
-def match_all_files(db: sqlite3.Connection) -> dict[str, int]:
-    """Match every file in ``files_on_disk`` to transfers using the filename parser.
+def match_all_files(db: sqlite3.Connection, unmatched_only: bool = False) -> dict[str, int]:
+    """Match files in ``files_on_disk`` to transfers using the filename parser.
+
+    If *unmatched_only* is True, skip files that already have at least one row
+    in ``transfer_file_matches`` — used in incremental mode to avoid
+    re-processing files that were matched in a previous full or incremental run.
 
     Delegates all filename interpretation to ``matchers.filename_parser`` and
     all DB lookups to ``matchers.db_resolve``.  No per-folder special-casing
@@ -211,9 +216,17 @@ def match_all_files(db: sqlite3.Connection) -> dict[str, int]:
 
     Returns a dict of match_rule → row count for progress display.
     """
-    rows = db.execute(
-        "SELECT id, folder_root, filename FROM files_on_disk"
-    ).fetchall()
+    if unmatched_only:
+        rows = db.execute(
+            "SELECT f.id, f.folder_root, f.filename FROM files_on_disk f "
+            "WHERE NOT EXISTS ("
+            "    SELECT 1 FROM transfer_file_matches WHERE file_id = f.id"
+            ")"
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT id, folder_root, filename FROM files_on_disk"
+        ).fetchall()
 
     counts: dict[str, int] = {}
 
@@ -509,6 +522,98 @@ def print_stats_only(db: sqlite3.Connection):
     print_report(db)
 
 
+def _run_incremental(db: sqlite3.Connection, dry_run: bool = False) -> None:
+    """Incremental scan: discover new files and match only those.
+
+    Unlike the full run this mode:
+    - Does NOT drop transfer_file_matches (existing matches are preserved)
+    - Does NOT reset has_transfer_on_disk or transfers.filename/file_path
+    - Only scans the filesystem for files not already in files_on_disk
+    - Only runs the matcher for files with no entry in transfer_file_matches
+    - Still prunes records for files that have disappeared from disk
+
+    Use this after new tapes/proxies are added to /o/ so you don't have to
+    wait for a full overnight re-scan.  Run 1d_ffprobe_metadata.py afterward
+    to probe the newly discovered files.
+    """
+    print("Incremental mode — preserving existing matches.")
+    db.executescript(STAGE_1C_SCHEMA)  # ensure tables exist on first-ever run
+
+    n_before = db.execute("SELECT COUNT(*) FROM files_on_disk").fetchone()[0]
+
+    # Scan all roots; INSERT OR IGNORE means existing rows are untouched.
+    t0 = time.time()
+    total_scanned = 0
+    seen_by_root: dict[str, set[str]] = {}
+    for root, recursive, _is_master in SCAN_ROOTS:
+        if not os.path.isdir(root):
+            print(f"  WARNING: {root} not accessible, skipping")
+            continue
+        t1 = time.time()
+        mode = "" if recursive else " (top-level only)"
+        print(f"Scanning {root}{mode}...", end=" ", flush=True)
+        n, seen = scan_folder(root, db, recursive=recursive)
+        seen_by_root[root] = seen
+        print(f"{n:,d} files ({time.time()-t1:.1f}s)")
+        total_scanned += n
+
+    n_after = db.execute("SELECT COUNT(*) FROM files_on_disk").fetchone()[0]
+
+    # Prune stale file records (same logic as full run).
+    n_pruned = 0
+    for root, seen_rels in seen_by_root.items():
+        existing = db.execute(
+            "SELECT id, rel_path FROM files_on_disk WHERE folder_root = ?", (root,)
+        ).fetchall()
+        stale_ids = [row[0] for row in existing if row[1] not in seen_rels]
+        if stale_ids:
+            db.execute(
+                f"DELETE FROM files_on_disk WHERE id IN ({','.join('?' * len(stale_ids))})",
+                stale_ids,
+            )
+            n_pruned += len(stale_ids)
+    db.commit()
+
+    n_new = n_after - n_before
+    print(f"\nTotal scanned: {total_scanned:,d} files ({time.time()-t0:.1f}s)")
+    print(f"New files added: {n_new:,d}  |  Pruned (no longer on disk): {n_pruned:,d}")
+
+    # Match only files not yet in transfer_file_matches.
+    unmatched_count = db.execute(
+        "SELECT COUNT(*) FROM files_on_disk f "
+        "WHERE NOT EXISTS (SELECT 1 FROM transfer_file_matches WHERE file_id = f.id)"
+    ).fetchone()[0]
+
+    if unmatched_count == 0:
+        print("All files already matched — nothing to do.")
+        print_report(db)
+        return
+
+    print(f"\nMatching {unmatched_count:,d} unmatched file(s)...", end=" ", flush=True)
+    t1 = time.time()
+    rule_counts = match_all_files(db, unmatched_only=True)
+    total_rows = sum(rule_counts.values())
+    print(f"{total_rows:,d} new match rows in {time.time() - t1:.1f}s")
+    for rule, cnt in sorted(rule_counts.items()):
+        print(f"    {rule:35s}: {cnt:,d}")
+
+    n_dedup = dedup_transfer_file_matches(db)
+    if n_dedup:
+        print(f"Removed {n_dedup:,d} duplicate match row(s).")
+
+    if not dry_run:
+        n_updated = set_has_transfer_on_disk(db)
+        print(f"\nUpdated has_transfer_on_disk = 1 for {n_updated:,d} film_rolls (cumulative)")
+        t1 = time.time()
+        print("Backfilling transfers.filename/file_path ...", end=" ", flush=True)
+        n_backfill = backfill_transfer_file_paths(db)
+        print(f"{n_backfill:,d} transfers updated ({time.time() - t1:.1f}s)")
+    else:
+        print("\n(dry-run — DB flags and file paths not updated)")
+
+    print_report(db)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -521,6 +626,8 @@ def main():
                         help="Report only — don't update has_transfer_on_disk")
     parser.add_argument("--stats", action="store_true",
                         help="Show stats from previous run (no scan)")
+    parser.add_argument("--incremental", action="store_true",
+                        help="Only discover and match new files; preserves existing matches")
     args = parser.parse_args()
 
     if not os.path.exists(DB_PATH):
@@ -537,7 +644,12 @@ def main():
         db.close()
         return
 
-    # Prepare Stage 1c tables.
+    if args.incremental:
+        _run_incremental(db, dry_run=args.dry_run)
+        db.close()
+        return
+
+    # --- Full rebuild ---
     # files_on_disk is kept across runs (stable IDs preserve ffprobe_metadata links).
     # transfer_file_matches is always rebuilt from scratch (pure derived data).
     print("Preparing Stage 1c tables...")

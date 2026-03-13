@@ -104,7 +104,7 @@ router.get("/", (req, res) => {
 
   const rows = d
     .prepare(
-      `SELECT fr.identifier, fr.id_prefix, fr.title, fr.date, fr.feet, fr.minutes, fr.audio,
+      `SELECT fr.identifier, fr.id_prefix, fr.title, fr.alternate_title, fr.date, fr.feet, fr.minutes, fr.audio,
               fr.mission, fr.has_shotlist_pdf, fr.has_transfer_on_disk,
               ${bestQualitySubquery("video_codec")} AS best_quality_codec,
               ${bestQualitySubquery("video_width")} AS best_quality_width,
@@ -223,12 +223,67 @@ router.get("/:identifier", (req, res) => {
     /* table not yet created */
   }
 
+  // For unauthenticated users: hide any file or discovery tape that is shared
+  // across multiple reels (e.g. L00x proxy files matched to a whole LTO tape,
+  // or Discovery compilation tapes containing several film rolls).
+  let visibleFileMatches: unknown[] = fileMatches;
+  let visibleFfprobeData: unknown[] = ffprobeData;
+  let visibleDiscoveryEntries: unknown[] = discoveryEntries;
+
+  if (!reveal) {
+    // File IDs referenced by more than one distinct reel
+    const multiReelFileIds = new Set(
+      (
+        d
+          .prepare(
+            `SELECT file_id
+             FROM transfer_file_matches
+             GROUP BY file_id
+             HAVING COUNT(DISTINCT reel_identifier) > 1`
+          )
+          .all() as { file_id: number }[]
+      ).map((r) => r.file_id)
+    );
+    visibleFileMatches = (fileMatches as { file_id: number }[]).filter(
+      (fm) => !multiReelFileIds.has(fm.file_id)
+    );
+
+    // Keep ffprobe data only for surviving files
+    const visibleFileIdSet = new Set(
+      (visibleFileMatches as { file_id: number }[]).map((fm) => fm.file_id)
+    );
+    visibleFfprobeData = (ffprobeData as { file_id: number }[]).filter((p) =>
+      visibleFileIdSet.has(p.file_id)
+    );
+
+    // Tape numbers linked to more than one distinct reel via discovery_capture
+    const multiReelTapeNums = new Set(
+      (
+        d
+          .prepare(
+            `SELECT tape_number
+             FROM transfers
+             WHERE transfer_type = 'discovery_capture'
+             GROUP BY tape_number
+             HAVING COUNT(DISTINCT reel_identifier) > 1`
+          )
+          .all() as { tape_number: number }[]
+      ).map((r) => r.tape_number)
+    );
+    visibleDiscoveryEntries = (discoveryEntries as { tape_number: number }[]).filter(
+      (e) => !multiReelTapeNums.has(e.tape_number)
+    );
+  }
+
   // Obfuscate the reel identifier when not in reveal mode
-  const outReel = reveal ? reel : { ...reel, identifier: toSlater(identifier) };
+  const scrubNara = (v: unknown) => (typeof v === "string" ? v.replace(/NARA/gi, "") : v);
+  const outReel = reveal
+    ? reel
+    : { ...reel, identifier: toSlater(identifier), notes: scrubNara(reel.notes) };
 
   const outDiscoveryEntries = reveal
     ? discoveryEntries
-    : (discoveryEntries as Record<string, unknown>[]).map((entry) => {
+    : (visibleDiscoveryEntries as Record<string, unknown>[]).map((entry) => {
         const entryId =
           typeof entry.identifier === "string" && entry.identifier ? entry.identifier : null;
         if (!entryId) return entry;
@@ -244,8 +299,8 @@ router.get("/:identifier", (req, res) => {
   res.json({
     reel: outReel,
     transfers,
-    fileMatches,
-    ffprobeData,
+    fileMatches: visibleFileMatches,
+    ffprobeData: visibleFfprobeData,
     discoveryEntries: outDiscoveryEntries,
     naraCitations,
     externalRefs,

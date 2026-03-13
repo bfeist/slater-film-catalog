@@ -4,7 +4,7 @@ One-time script: Download NARA shotlist PDFs from S3 and update the DB.
 
 Source  : input_indexes/nara_apollo_70mm_metadata.json
 Dest    : static_assets/shotlist_pdfs/<filename>.pdf
-DB      : data/01b_excel.db
+DB      : database/catalog.db
   - Appends filename to film_rolls.shotlist_pdfs (JSON array, same format as FR shotlists)
   - Sets film_rolls.has_shotlist_pdf = 1
 
@@ -31,7 +31,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 JSON_PATH  = ROOT / "input_indexes" / "nara_apollo_70mm_metadata.json"
-DB_PATH    = ROOT / "data" / "01b_excel.db"
+DB_PATH    = ROOT / "database" / "catalog.db"
 DEST_DIR   = ROOT / "static_assets" / "shotlist_pdfs"
 
 
