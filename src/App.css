@@ -3,6 +3,11 @@
    Black, white, grays only. Layout-focused, no decoration.
    --------------------------------------------------------------------------- */
 
+:root {
+  --layout-header-height: 46px;
+  --search-toolbar-height: 120px; /* updated live by ResizeObserver in SearchPage */
+}
+
 *,
 *::before,
 *::after {
@@ -98,7 +103,11 @@ select {
   gap: 2rem;
   padding: 0.75rem 0;
   border-bottom: 1px solid #dddddd;
-  margin-bottom: 1rem;
+  margin-bottom: 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: #ffffff;
 }
 
 .layout-title {
@@ -117,18 +126,67 @@ select {
   padding-bottom: 2rem;
 }
 
+/* --- Sticky search toolbar (wraps search bar + filters + count) --- */
+.search-toolbar-sticky {
+  position: sticky;
+  top: var(--layout-header-height);
+  z-index: 90;
+  background: #ffffff;
+  padding-top: 0.75rem;
+  border-bottom: 1px solid #dddddd;
+  margin-bottom: 0;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 7%);
+}
+
+.toolbar-info {
+  font-size: 0.85em;
+  color: #666666;
+  padding-bottom: 0.5rem;
+}
+
 /* --- Search bar --- */
 .search-bar {
   display: flex;
   gap: 0.5rem;
   align-items: center;
   flex-wrap: wrap;
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.search-input-wrapper {
+  position: relative;
+  flex: 1;
+  min-width: 250px;
+  display: flex;
+  align-items: center;
 }
 
 .search-input {
   flex: 1;
   min-width: 250px;
+}
+
+.search-input-wrapper .search-input {
+  width: 100%;
+  padding-right: 2rem;
+}
+
+.search-clear-btn {
+  position: absolute;
+  right: 0.4rem;
+  background: transparent;
+  border: none;
+  color: #aaaaaa;
+  padding: 0.15em 0.3em;
+  font-size: 0.9em;
+  cursor: pointer;
+  line-height: 1;
+  border-radius: 2px;
+}
+
+.search-clear-btn:hover {
+  color: #555555;
+  background: #eeeeee;
 }
 
 .search-select {
@@ -143,9 +201,56 @@ select {
   white-space: nowrap;
 }
 
+/* --- Pagination --- */
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 1.25rem 0;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.pagination-btn {
+  padding: 0.25rem 0.65rem;
+  font-size: 0.875em;
+  border: 1px solid #cccccc;
+  background: #f4f4f4;
+  border-radius: 3px;
+  cursor: pointer;
+  min-width: 2.2rem;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.pagination-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  background: #e8e8e8;
+  border-color: #999999;
+}
+
+.pagination-btn.active {
+  background: #333333;
+  color: #ffffff;
+  border-color: #333333;
+  font-weight: 600;
+}
+
+.pagination-ellipsis {
+  color: #888888;
+  padding: 0 0.15rem;
+  line-height: 1.5;
+  font-size: 0.875em;
+}
+
 /* --- Reel table --- */
 .reel-table-container {
-  overflow-x: auto;
+  overflow: auto;
+  max-height: calc(100vh - var(--layout-header-height) - var(--search-toolbar-height) - 5rem);
 }
 
 .reel-table-info {
@@ -168,6 +273,10 @@ select {
 }
 
 .reel-table th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #ffffff;
   border-bottom: 2px solid #cccccc;
   font-weight: 600;
   white-space: nowrap;

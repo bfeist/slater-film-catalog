@@ -29,6 +29,7 @@ Usage:
 """
 
 import argparse
+import concurrent.futures
 import json
 import os
 import sqlite3
@@ -182,58 +183,75 @@ def process_batch(
     rows: list[tuple[str, str]],
     *,
     dry_run: bool = False,
+    workers: int = 3,
 ) -> tuple[int, int]:
-    """Generate alternate titles for a batch of rows. Returns (success, fail) counts."""
+    """Generate alternate titles for a batch of rows using parallel Ollama calls.
+
+    Returns (success, fail) counts.
+    """
     ok = 0
     fail = 0
-    for i, (ident, title) in enumerate(rows, 1):
-        try:
-            alt = call_ollama(title)
-            alt = _strip_reel_ids(alt)  # strip any identifiers the LLM echoed back
-            # Use the identifier-stripped title as baseline for all comparisons so
-            # that annotation tokens (e.g. "FR", "0046", "DISCOVERY") don't skew
-            # word-count or overlap checks.
-            clean_orig = _strip_reel_ids(title)
-            # Validation 1: reject if notably longer than original
-            orig_words = len(clean_orig.split())
-            alt_words = len(alt.split())
-            if alt_words > orig_words * 1.3 + 3:
-                print(f"  [{i}/{len(rows)}] {ident}: REJECTED (too wordy: {orig_words}→{alt_words} words)")
-                print(f"    orig: {title}")
-                print(f"    alt:  {alt}")
-                fail += 1
-                continue
+    total = len(rows)
 
-            # Validation 2: reject hallucinations — must share significant words
-            orig_sig = _significant_words(clean_orig)
-            alt_sig = _significant_words(alt)
-            if orig_sig and alt_sig:
-                overlap = len(orig_sig & alt_sig) / len(orig_sig)
-                if overlap < 0.25:
-                    print(f"  [{i}/{len(rows)}] {ident}: REJECTED (hallucination — {overlap:.0%} word overlap)")
+    def _generate(job: tuple[int, str, str]) -> tuple[int, str, str, str]:
+        """Call Ollama for one reel; returns (index, ident, title, alt)."""
+        idx, ident, title = job
+        return idx, ident, title, call_ollama(title)
+
+    jobs = [(i, ident, title) for i, (ident, title) in enumerate(rows, 1)]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {executor.submit(_generate, job): job for job in jobs}
+
+        for future in concurrent.futures.as_completed(future_map):
+            i, ident, title = future_map[future]
+            try:
+                _, ident, title, alt = future.result()
+                alt = _strip_reel_ids(alt)  # strip any identifiers the LLM echoed back
+                # Use the identifier-stripped title as baseline for all comparisons so
+                # that annotation tokens (e.g. "FR", "0046", "DISCOVERY") don't skew
+                # word-count or overlap checks.
+                clean_orig = _strip_reel_ids(title)
+                # Validation 1: reject if notably longer than original
+                orig_words = len(clean_orig.split())
+                alt_words = len(alt.split())
+                if alt_words > orig_words * 1.3 + 3:
+                    print(f"  [{i}/{total}] {ident}: REJECTED (too wordy: {orig_words}→{alt_words} words)")
                     print(f"    orig: {title}")
                     print(f"    alt:  {alt}")
                     fail += 1
                     continue
 
-            if not dry_run:
-                db.execute(
-                    "UPDATE film_rolls SET alternate_title = ? WHERE identifier = ?",
-                    (alt, ident),
-                )
-                db.commit()
+                # Validation 2: reject hallucinations — must share significant words
+                orig_sig = _significant_words(clean_orig)
+                alt_sig = _significant_words(alt)
+                if orig_sig and alt_sig:
+                    overlap = len(orig_sig & alt_sig) / len(orig_sig)
+                    if overlap < 0.25:
+                        print(f"  [{i}/{total}] {ident}: REJECTED (hallucination — {overlap:.0%} word overlap)")
+                        print(f"    orig: {title}")
+                        print(f"    alt:  {alt}")
+                        fail += 1
+                        continue
 
-            status = "DRY-RUN" if dry_run else "OK"
-            print(f"  [{i}/{len(rows)}] {ident}: {status}")
-            print(f"    orig: {title}")
-            print(f"    alt:  {alt}")
-            ok += 1
-        except urllib.error.URLError as exc:
-            print(f"  [{i}/{len(rows)}] {ident}: ERROR - {exc}")
-            fail += 1
-        except Exception as exc:
-            print(f"  [{i}/{len(rows)}] {ident}: ERROR - {exc}")
-            fail += 1
+                if not dry_run:
+                    db.execute(
+                        "UPDATE film_rolls SET alternate_title = ? WHERE identifier = ?",
+                        (alt, ident),
+                    )
+                    db.commit()
+
+                status = "DRY-RUN" if dry_run else "OK"
+                print(f"  [{i}/{total}] {ident}: {status}")
+                print(f"    orig: {title}")
+                print(f"    alt:  {alt}")
+                ok += 1
+            except urllib.error.URLError as exc:
+                print(f"  [{i}/{total}] {ident}: ERROR - {exc}")
+                fail += 1
+            except Exception as exc:
+                print(f"  [{i}/{total}] {ident}: ERROR - {exc}")
+                fail += 1
 
     return ok, fail
 

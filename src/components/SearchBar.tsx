@@ -1,4 +1,6 @@
 import { useState, type FormEvent, type JSX } from "react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faXmark } from "@fortawesome/free-solid-svg-icons";
 
 interface SearchBarProps {
   initialQuery?: string;
@@ -21,19 +23,37 @@ export default function SearchBar({
     onSearch(query, revealed === false ? true : hasTransfer);
   }
 
+  function handleClear() {
+    setQuery("");
+    setHasTransfer(false);
+    onSearch("", false);
+  }
+
   return (
     <form className="search-bar" onSubmit={handleSubmit}>
-      <input
-        type="text"
-        placeholder={
-          revealed
-            ? "Search by identifier, Slater # (SFR-XXXXXX), title, description, or mission\u2026"
-            : "Search by Slater # (SFR-XXXXXX), title, description, or mission\u2026"
-        }
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        className="search-input"
-      />
+      <div className="search-input-wrapper">
+        <input
+          type="text"
+          placeholder={
+            revealed
+              ? "Search by identifier, Slater Film Roll (SFR-XXXXXX), title, description, or mission…"
+              : "Search by Slater Film Roll (SFR-XXXXXX), title, description, or mission…"
+          }
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="search-input"
+        />
+        {query && (
+          <button
+            type="button"
+            className="search-clear-btn"
+            onClick={handleClear}
+            aria-label="Clear search"
+          >
+            <FontAwesomeIcon icon={faXmark} />
+          </button>
+        )}
+      </div>
       {revealed !== false && (
         <label className="search-checkbox">
           <input
