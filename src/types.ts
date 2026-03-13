@@ -5,6 +5,7 @@
 /** film_rolls table */
 export interface FilmReel {
   identifier: string;
+  slater_number: string;
   id_prefix: string;
   title: string | null;
   orig_title: string | null;
@@ -158,6 +159,8 @@ export interface ReelSearchResponse {
   page: number;
   limit: number;
   rows: FilmReel[];
+  /** True when identifiers are real (not Slater numbers). */
+  revealed: boolean;
 }
 
 export interface ReelDetailResponse {
@@ -168,6 +171,8 @@ export interface ReelDetailResponse {
   discoveryEntries: DiscoveryShotlist[];
   naraCitations: NaraCitation[];
   externalRefs: ExternalFileRef[];
+  /** True when identifiers are real (not Slater numbers). */
+  revealed: boolean;
 }
 
 export interface ShotlistPdfsResponse {

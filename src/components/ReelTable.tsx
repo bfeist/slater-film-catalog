@@ -7,9 +7,15 @@ interface ReelTableProps {
   rows: FilmReel[];
   total: number;
   onSelectReel: (identifier: string) => void;
+  revealed: boolean;
 }
 
-export default function ReelTable({ rows, total, onSelectReel }: ReelTableProps): JSX.Element {
+export default function ReelTable({
+  rows,
+  total,
+  onSelectReel,
+  revealed,
+}: ReelTableProps): JSX.Element {
   return (
     <div className="reel-table-container">
       <div className="reel-table-info">
@@ -19,8 +25,8 @@ export default function ReelTable({ rows, total, onSelectReel }: ReelTableProps)
       <table className="reel-table">
         <thead>
           <tr>
-            <th>Identifier</th>
-            <th>Prefix</th>
+            {revealed && <th>Identifier</th>}
+            <th>Slater #</th>
             <th>Title</th>
             <th>Date</th>
             <th>Disk</th>
@@ -34,12 +40,14 @@ export default function ReelTable({ rows, total, onSelectReel }: ReelTableProps)
               onClick={() => onSelectReel(r.identifier)}
               className="reel-table-clickable"
             >
-              <td>
-                <button className="reel-link-btn" type="button">
-                  {r.identifier}
-                </button>
-              </td>
-              <td>{r.id_prefix}</td>
+              {revealed && (
+                <td>
+                  <button className="reel-link-btn" type="button">
+                    {r.identifier}
+                  </button>
+                </td>
+              )}
+              <td>{r.slater_number}</td>
               <td className="reel-title-cell" title={r.title ?? ""}>
                 {r.title ? (r.title.length > 80 ? r.title.slice(0, 80) + "…" : r.title) : "—"}
               </td>
@@ -50,7 +58,7 @@ export default function ReelTable({ rows, total, onSelectReel }: ReelTableProps)
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={6} className="reel-table-empty">
+              <td colSpan={revealed ? 6 : 5} className="reel-table-empty">
                 No results
               </td>
             </tr>

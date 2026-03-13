@@ -9,19 +9,21 @@ import { config } from "./config.js";
 
 // Route modules
 import statsRouter from "./routes/stats.js";
-import prefixesRouter from "./routes/prefixes.js";
 import reelsRouter from "./routes/reels.js";
 import videoRouter from "./routes/video.js";
 import shotlistPdfRouter from "./routes/shotlistPdf.js";
+import { initSlaterMap } from "./slater.js";
 
 export function createApp(): express.Application {
   const app = express();
+
+  // Build the identifier ↔ slater-number lookup table
+  initSlaterMap();
 
   // ---------------------------------------------------------------------------
   // API routes
   // ---------------------------------------------------------------------------
   app.use("/api/stats", statsRouter);
-  app.use("/api/prefixes", prefixesRouter);
   app.use("/api/reels", reelsRouter);
   app.use("/api/video", videoRouter);
   app.use("/api/shotlist-pdf", shotlistPdfRouter);

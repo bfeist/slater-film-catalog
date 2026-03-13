@@ -84,6 +84,7 @@ export default function ReelDetailModal({
       discoveryEntries,
       naraCitations,
       externalRefs,
+      revealed,
     } = data;
 
     const probeByFile = new Map<number, FfprobeMetadata>();
@@ -102,8 +103,12 @@ export default function ReelDetailModal({
           )}
 
           <dl className="reel-meta-dl">
-            <dt>Prefix</dt>
-            <dd>{reel.id_prefix}</dd>
+            {revealed && (
+              <>
+                <dt>Prefix</dt>
+                <dd>{reel.id_prefix}</dd>
+              </>
+            )}
 
             <dt>Date</dt>
             <dd>{reel.date || "—"}</dd>
@@ -187,7 +192,7 @@ export default function ReelDetailModal({
 
         {/* ---- Transfers ---- */}
         <section>
-          <TransferList transfers={transfers} />
+          <TransferList transfers={transfers} revealed={revealed} />
         </section>
 
         {/* ---- Files on disk ---- */}
@@ -196,26 +201,34 @@ export default function ReelDetailModal({
           {fileMatches.length === 0 ? (
             <p className="muted">No files matched on disk.</p>
           ) : (
-            fileMatches.map((fm) => (
-              <FileInfoCard
-                key={fm.file_id}
-                file={fm}
-                probe={probeByFile.get(fm.file_id)}
-                onPlay={(id) =>
-                  setPlayingFile({
-                    id,
-                    name: fm.filename,
-                    duration: probeByFile.get(fm.file_id)?.duration_secs ?? null,
-                  })
-                }
-              />
-            ))
+            fileMatches.map((fm, i) => {
+              const probe = probeByFile.get(fm.file_id);
+              const displayFilename = revealed
+                ? undefined
+                : `${probe?.quality_label?.toLowerCase().replace(/\s+/g, "-") ?? "file"}-${i + 1}`;
+              return (
+                <FileInfoCard
+                  key={fm.file_id}
+                  file={fm}
+                  probe={probe}
+                  showPath={revealed}
+                  displayFilename={displayFilename}
+                  onPlay={(id) =>
+                    setPlayingFile({
+                      id,
+                      name: displayFilename ?? fm.filename,
+                      duration: probe?.duration_secs ?? null,
+                    })
+                  }
+                />
+              );
+            })
           )}
         </section>
 
         {/* ---- Discovery shotlist ---- */}
         <section>
-          <DiscoveryEntries entries={discoveryEntries} />
+          <DiscoveryEntries entries={discoveryEntries} revealed={revealed} />
         </section>
 
         {/* ---- NARA Citations ---- */}

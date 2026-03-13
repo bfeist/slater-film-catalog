@@ -12,7 +12,6 @@ export default function SearchPage(): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const q = searchParams.get("q") || "";
-  const prefix = searchParams.get("prefix") || "";
   const hasTransfer = searchParams.get("has_transfer") === "1";
 
   const [rows, setRows] = useState<FilmReel[]>([]);
@@ -20,6 +19,8 @@ export default function SearchPage(): JSX.Element {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedReel, setSelectedReel] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState(true);
+  const effectiveHasTransfer = !revealed ? true : hasTransfer;
 
   // Track the next page to fetch (1-based). Reset when filters change.
   const nextPageRef = useRef(1);
@@ -39,14 +40,14 @@ export default function SearchPage(): JSX.Element {
       try {
         const result = await searchReels({
           q: q || undefined,
-          prefix: prefix || undefined,
           page: 1,
           limit: PAGE_SIZE,
-          has_transfer: hasTransfer || undefined,
+          has_transfer: effectiveHasTransfer || undefined,
         });
         if (!cancelled) {
           setRows(result.rows);
           setTotal(result.total);
+          setRevealed(result.revealed ?? true);
           nextPageRef.current = 2;
         }
       } catch (err) {
@@ -60,7 +61,7 @@ export default function SearchPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [q, prefix, hasTransfer]);
+  }, [q, effectiveHasTransfer]);
 
   // Load next page (called by IntersectionObserver sentinel)
   const loadMore = useCallback(async () => {
@@ -70,10 +71,9 @@ export default function SearchPage(): JSX.Element {
       const page = nextPageRef.current;
       const result = await searchReels({
         q: q || undefined,
-        prefix: prefix || undefined,
         page,
         limit: PAGE_SIZE,
-        has_transfer: hasTransfer || undefined,
+        has_transfer: effectiveHasTransfer || undefined,
       });
       setRows((prev) => [...prev, ...result.rows]);
       setTotal(result.total);
@@ -83,7 +83,7 @@ export default function SearchPage(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [q, prefix, hasTransfer, loading]);
+  }, [q, effectiveHasTransfer, loading]);
 
   // Sentinel ref — triggers loadMore when scrolled into view
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -105,10 +105,9 @@ export default function SearchPage(): JSX.Element {
     return () => observer.disconnect();
   }, [loadMore]);
 
-  function handleSearch(newQ: string, newPrefix: string, newHasTransfer: boolean) {
+  function handleSearch(newQ: string, newHasTransfer: boolean) {
     const params: Record<string, string> = {};
     if (newQ) params.q = newQ;
-    if (newPrefix) params.prefix = newPrefix;
     if (newHasTransfer) params.has_transfer = "1";
     setSearchParams(params);
   }
@@ -117,14 +116,14 @@ export default function SearchPage(): JSX.Element {
     <div className="search-page">
       <SearchBar
         initialQuery={q}
-        initialPrefix={prefix}
-        initialHasTransfer={hasTransfer}
+        initialHasTransfer={effectiveHasTransfer}
         onSearch={handleSearch}
+        revealed={revealed}
       />
 
       {error && <div className="error-msg">Error: {error}</div>}
 
-      <ReelTable rows={rows} total={total} onSelectReel={setSelectedReel} />
+      <ReelTable rows={rows} total={total} onSelectReel={setSelectedReel} revealed={revealed} />
 
       {loading && <div className="loading">Loading…</div>}
 

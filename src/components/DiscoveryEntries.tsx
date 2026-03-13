@@ -3,9 +3,13 @@ import type { DiscoveryShotlist } from "../types";
 
 interface DiscoveryEntriesProps {
   entries: DiscoveryShotlist[];
+  revealed?: boolean;
 }
 
-export default function DiscoveryEntries({ entries }: DiscoveryEntriesProps): JSX.Element | null {
+export default function DiscoveryEntries({
+  entries,
+  revealed = true,
+}: DiscoveryEntriesProps): JSX.Element | null {
   if (entries.length === 0) return null;
 
   return (
@@ -17,7 +21,7 @@ export default function DiscoveryEntries({ entries }: DiscoveryEntriesProps): JS
             <dt>Tape #</dt>
             <dd>{e.tape_number}</dd>
 
-            <dt>Identifier</dt>
+            <dt>{revealed ? "Identifier" : "SFR"}</dt>
             <dd>{e.identifier || "—"}</dd>
 
             <dt>Description</dt>

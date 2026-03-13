@@ -1,27 +1,32 @@
 import type { JSX } from "react";
+import prettyBytes from "pretty-bytes";
 import type { FileMatch, FfprobeMetadata } from "../types";
-import {
-  formatBytes,
-  formatDuration,
-  formatFrameRate,
-  formatResolution,
-  formatBitrate,
-} from "../utils/format";
+import { formatDuration, formatFrameRate, formatResolution } from "../utils/format";
 
 interface FileInfoCardProps {
   file: FileMatch;
   probe: FfprobeMetadata | undefined;
   onPlay?: (fileId: number) => void;
+  showPath?: boolean;
+  displayFilename?: string;
 }
 
-export default function FileInfoCard({ file, probe, onPlay }: FileInfoCardProps): JSX.Element {
+export default function FileInfoCard({
+  file,
+  probe,
+  onPlay,
+  showPath = true,
+  displayFilename,
+}: FileInfoCardProps): JSX.Element {
   const fullPath = `${file.folder_root}/${file.rel_path}`;
 
   return (
     <div className="file-info-card">
       <div className="file-info-header">
-        <strong>{file.filename}</strong>
-        <span className="muted">{formatBytes(file.size_bytes)}</span>
+        <strong>{displayFilename ?? file.filename}</strong>
+        <span className="muted">
+          {file.size_bytes == null ? "—" : prettyBytes(file.size_bytes)}
+        </span>
         {onPlay && (
           <button className="play-btn" onClick={() => onPlay(file.file_id)}>
             ▶ Play
@@ -30,8 +35,12 @@ export default function FileInfoCard({ file, probe, onPlay }: FileInfoCardProps)
       </div>
 
       <dl className="file-info-dl">
-        <dt>Path</dt>
-        <dd className="mono-cell">{fullPath}</dd>
+        {showPath && (
+          <>
+            <dt>Path</dt>
+            <dd className="mono-cell">{fullPath}</dd>
+          </>
+        )}
 
         <dt>Match rule</dt>
         <dd>
@@ -58,7 +67,9 @@ export default function FileInfoCard({ file, probe, onPlay }: FileInfoCardProps)
             <dd>{formatDuration(probe.duration_secs)}</dd>
 
             <dt>Bitrate</dt>
-            <dd>{formatBitrate(probe.bit_rate)}</dd>
+            <dd>
+              {probe.bit_rate == null ? "—" : `${prettyBytes(probe.bit_rate, { bits: true })}/s`}
+            </dd>
 
             <dt>Video</dt>
             <dd>
@@ -89,7 +100,9 @@ export default function FileInfoCard({ file, probe, onPlay }: FileInfoCardProps)
                   {probe.audio_codec_long || probe.audio_codec},{" "}
                   {probe.audio_sample_rate ? `${probe.audio_sample_rate} Hz` : ""},{" "}
                   {probe.audio_channel_layout || `${probe.audio_channels}ch`}
-                  {probe.audio_bit_rate ? `, ${formatBitrate(probe.audio_bit_rate)}` : ""}
+                  {probe.audio_bit_rate != null
+                    ? `, ${prettyBytes(probe.audio_bit_rate, { bits: true })}/s`
+                    : ""}
                 </dd>
               </>
             )}

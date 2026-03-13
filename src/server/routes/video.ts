@@ -8,6 +8,8 @@ import fs from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { getDb } from "../db.js";
 import { config } from "../config.js";
+import { redactFileOnDiskEntry } from "../redaction.js";
+import { isRevealed } from "../slater.js";
 
 const router = Router();
 
@@ -73,13 +75,15 @@ router.post("/stop", (req, res) => {
 router.get("/:file_id/info", (req, res) => {
   const d = getDb();
   const fileId = parseInt(req.params.file_id, 10);
-  const file = d.prepare("SELECT * FROM files_on_disk WHERE id = ?").get(fileId);
+  const file = d.prepare("SELECT * FROM files_on_disk WHERE id = ?").get(fileId) as
+    | Record<string, unknown>
+    | undefined;
   if (!file) {
     res.status(404).json({ error: "File not found" });
     return;
   }
   const probe = d.prepare("SELECT * FROM ffprobe_metadata WHERE file_id = ?").get(fileId);
-  res.json({ file, probe });
+  res.json({ file: isRevealed(req) ? file : redactFileOnDiskEntry(file), probe });
 });
 
 // ---- GET /api/video/:file_id/stream ----

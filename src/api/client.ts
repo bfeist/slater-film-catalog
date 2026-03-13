@@ -4,7 +4,6 @@
 
 import type {
   StatsResponse,
-  PrefixCount,
   ReelSearchResponse,
   ReelDetailResponse,
   ShotlistPdfsResponse,
@@ -12,8 +11,19 @@ import type {
 
 const BASE = "/api";
 
+/** Return reveal-key header if one is stored in sessionStorage. */
+function revealHeaders(): Record<string, string> {
+  try {
+    const key = globalThis.sessionStorage?.getItem("revealKey");
+    if (key) return { "X-Reveal-Key": key };
+  } catch {
+    /* SSR / non-browser — ignore */
+  }
+  return {};
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, { headers: revealHeaders() });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`API ${res.status}: ${body}`);
@@ -25,13 +35,8 @@ export function fetchStats(): Promise<StatsResponse> {
   return get<StatsResponse>("/stats");
 }
 
-export function fetchPrefixes(): Promise<PrefixCount[]> {
-  return get<PrefixCount[]>("/prefixes");
-}
-
 export interface ReelSearchParams {
   q?: string;
-  prefix?: string;
   page?: number;
   limit?: number;
   has_transfer?: boolean;
@@ -40,7 +45,6 @@ export interface ReelSearchParams {
 export function searchReels(params: ReelSearchParams): Promise<ReelSearchResponse> {
   const sp = new URLSearchParams();
   if (params.q) sp.set("q", params.q);
-  if (params.prefix) sp.set("prefix", params.prefix);
   if (params.page) sp.set("page", String(params.page));
   if (params.limit) sp.set("limit", String(params.limit));
   if (params.has_transfer) sp.set("has_transfer", "1");

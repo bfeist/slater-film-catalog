@@ -188,6 +188,8 @@ def safe_str(val) -> str | None:
     if val is None:
         return None
     s = str(val).strip()
+    # openpyxl encodes \r as _x000D_ in XML-sourced cells; normalise to newline
+    s = s.replace("_x000D_\n", "\n").replace("_x000D_", "\n")
     return s if s else None
 
 

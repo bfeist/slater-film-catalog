@@ -105,6 +105,12 @@ export const config = {
 
   /** Built Vite SPA assets (served by Express in production) */
   viteDistDir: process.env.VITE_DIST_DIR ?? fromRoot(".local", "vite", "dist"),
+
+  /** HMAC key used to derive Slater numbers from identifiers */
+  slaterSecret: process.env.SLATER_SECRET ?? "nasa-slater-default-hmac-key",
+
+  /** Shared secret that unlocks real identifiers (empty = always revealed) */
+  revealSecret: process.env.REVEAL_SECRET ?? "",
 } as const;
 
 export type Config = typeof config;

@@ -1,7 +1,7 @@
 import { useState, useEffect, type JSX } from "react";
+import prettyBytes from "pretty-bytes";
 import { fetchStats } from "../api/client";
 import type { StatsResponse } from "../types";
-import { formatBytes } from "../utils/format";
 
 export default function StatsPage(): JSX.Element {
   const [stats, setStats] = useState<StatsResponse | null>(null);
@@ -27,7 +27,8 @@ export default function StatsPage(): JSX.Element {
     {
       label: "Total Video Size",
       value: stats.total_video_size_bytes,
-      formatted: formatBytes(stats.total_video_size_bytes),
+      formatted:
+        stats.total_video_size_bytes == null ? "—" : prettyBytes(stats.total_video_size_bytes),
     },
   ];
 

@@ -2,16 +2,6 @@
 // Formatting helpers
 // ---------------------------------------------------------------------------
 
-/** Format bytes to human-readable string */
-export function formatBytes(bytes: number | null): string {
-  if (bytes == null) return "—";
-  if (bytes === 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  const val = bytes / Math.pow(1024, i);
-  return `${val.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
-}
-
 /** Format seconds to HH:MM:SS */
 export function formatDuration(secs: number | null): string {
   if (secs == null) return "—";
@@ -37,13 +27,4 @@ export function formatFrameRate(fr: string | null): string {
 export function formatResolution(w: number | null, h: number | null): string {
   if (w == null || h == null) return "—";
   return `${w}×${h}`;
-}
-
-/** Format bitrate to human-readable */
-export function formatBitrate(bps: number | null): string {
-  if (bps == null) return "—";
-  if (bps > 1_000_000_000) return `${(bps / 1_000_000_000).toFixed(1)} Gbps`;
-  if (bps > 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`;
-  if (bps > 1_000) return `${(bps / 1_000).toFixed(0)} kbps`;
-  return `${bps} bps`;
 }

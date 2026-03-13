@@ -3,9 +3,13 @@ import type { Transfer } from "../types";
 
 interface TransferListProps {
   transfers: Transfer[];
+  revealed?: boolean;
 }
 
-export default function TransferList({ transfers }: TransferListProps): JSX.Element {
+export default function TransferList({
+  transfers,
+  revealed = true,
+}: TransferListProps): JSX.Element {
   if (transfers.length === 0) {
     return <p className="muted">No transfers recorded.</p>;
   }
@@ -28,7 +32,7 @@ export default function TransferList({ transfers }: TransferListProps): JSX.Elem
           </tr>
         </thead>
         <tbody>
-          {transfers.map((t) => (
+          {transfers.map((t, i) => (
             <tr key={t.id}>
               <td>
                 <code>{t.transfer_type}</code>
@@ -37,9 +41,11 @@ export default function TransferList({ transfers }: TransferListProps): JSX.Elem
               <td>{t.reel_part ?? "—"}</td>
               <td>{t.lto_number || "—"}</td>
               <td>{t.tape_number || "—"}</td>
-              <td className="mono-cell">{t.filename || "—"}</td>
-              <td className="path-cell" title={t.file_path ?? ""}>
-                {t.file_path || "—"}
+              <td className="mono-cell">
+                {revealed ? t.filename || "—" : `transfer-file-${i + 1}`}
+              </td>
+              <td className="path-cell" title={revealed ? (t.file_path ?? "") : ""}>
+                {revealed ? t.file_path || "—" : "—"}
               </td>
               <td>{t.file_description || "—"}</td>
               <td>{t.transfer_status || "—"}</td>

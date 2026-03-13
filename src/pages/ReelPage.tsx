@@ -48,6 +48,7 @@ export default function ReelPage(): JSX.Element {
     discoveryEntries,
     naraCitations,
     externalRefs,
+    revealed,
   } = data;
 
   // Index ffprobe data by file_id for quick lookup
@@ -71,8 +72,12 @@ export default function ReelPage(): JSX.Element {
         )}
 
         <dl className="reel-meta-dl">
-          <dt>Prefix</dt>
-          <dd>{reel.id_prefix}</dd>
+          {revealed && (
+            <>
+              <dt>Prefix</dt>
+              <dd>{reel.id_prefix}</dd>
+            </>
+          )}
 
           <dt>Date</dt>
           <dd>{reel.date || "—"}</dd>
@@ -170,6 +175,7 @@ export default function ReelPage(): JSX.Element {
               key={fm.file_id}
               file={fm}
               probe={probeByFile.get(fm.file_id)}
+              showPath={revealed}
               onPlay={(id) =>
                 setPlayingFile({
                   id,
@@ -184,7 +190,7 @@ export default function ReelPage(): JSX.Element {
 
       {/* ---- Discovery shotlist ---- */}
       <section>
-        <DiscoveryEntries entries={discoveryEntries} />
+        <DiscoveryEntries entries={discoveryEntries} revealed={revealed} />
       </section>
 
       {/* ---- NARA Citations ---- */}
