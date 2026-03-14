@@ -103,6 +103,16 @@ export const config = {
       ? "C:/Windows/Fonts/arial.ttf"
       : "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
 
+  /** Monospace font used for timecode / frame-number watermark burn-in.
+   *  Lucida Console (lucon.ttf) on Windows — thin, clean, sans-serif monospace
+   *  with a technical/instrument character; ships on Windows 95+.
+   *  DejaVu Sans Mono on Linux. */
+  watermarkMonoFontPath:
+    process.env.WATERMARK_MONO_FONT_PATH ??
+    (process.platform === "win32"
+      ? "C:/Windows/Fonts/lucon.ttf"
+      : "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
+
   /** Built Vite SPA assets (served by Express in production) */
   viteDistDir: process.env.VITE_DIST_DIR ?? fromRoot(".local", "vite", "dist"),
 

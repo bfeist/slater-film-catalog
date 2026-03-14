@@ -14,6 +14,121 @@ import { isRevealed } from "../slater.js";
 const router = Router();
 
 // ---------------------------------------------------------------------------
+// Timecode helpers — used for watermark burn-in when the source has a TC track
+// ---------------------------------------------------------------------------
+
+interface ParsedTC {
+  hours: number;
+  minutes: number;
+  seconds: number;
+  frames: number;
+  dropFrame: boolean;
+}
+
+/** Parse a SMPTE timecode string such as "01:23:45:12" (NDF) or "01:23:45;12" (DF). */
+function parseTimecodeStr(tc: string): ParsedTC | null {
+  const m = tc.trim().match(/^(\d{1,2}):(\d{2}):(\d{2})([;:])(\d{2})$/);
+  if (!m) return null;
+  return {
+    hours: parseInt(m[1], 10),
+    minutes: parseInt(m[2], 10),
+    seconds: parseInt(m[3], 10),
+    dropFrame: m[4] === ";",
+    frames: parseInt(m[5], 10),
+  };
+}
+
+/** Convert a parsed TC to an absolute frame count. */
+function tcToFrameCount(tc: ParsedTC, nominalFps: number): number {
+  const fps = Math.round(nominalFps);
+  const raw = (tc.hours * 3600 + tc.minutes * 60 + tc.seconds) * fps + tc.frames;
+  if (!tc.dropFrame || fps !== 30) return raw;
+  // SMPTE 29.97 drop-frame: 2 frames dropped per non-10th minute
+  const totalMins = 60 * tc.hours + tc.minutes;
+  return raw - 2 * (totalMins - Math.floor(totalMins / 10));
+}
+
+/** Convert an absolute frame count back to a SMPTE TC string. */
+function frameCountToTc(n: number, nominalFps: number, dropFrame: boolean): string {
+  n = Math.max(0, n);
+  const fps = Math.round(nominalFps);
+  let hh: number, mm: number, ss: number, ff: number;
+  if (dropFrame && fps === 30) {
+    // SMPTE 29.97 drop-frame reverse conversion
+    const framesPerMin = 30 * 60 - 2; // 1798
+    const framesPer10Min = 30 * 600 - 2 * 9; // 17982
+    const tenGroups = Math.floor(n / framesPer10Min);
+    const rem = n % framesPer10Min;
+    const adjMins = rem < 30 * 60 ? 0 : 1 + Math.floor((rem - 30 * 60) / framesPerMin);
+    const v = rem + 2 * adjMins; // virtual index treating dropped frames as real
+    ff = v % 30;
+    ss = Math.floor(v / 30) % 60;
+    const mmIn10 = Math.floor(v / 1800);
+    hh = Math.floor(tenGroups / 6);
+    mm = (tenGroups % 6) * 10 + mmIn10;
+  } else {
+    ff = n % fps;
+    ss = Math.floor(n / fps) % 60;
+    mm = Math.floor(n / (fps * 60)) % 60;
+    hh = Math.floor(n / (fps * 3600));
+  }
+  const sep = dropFrame ? ";" : ":";
+  return (
+    [String(hh).padStart(2, "0"), String(mm).padStart(2, "0"), String(ss).padStart(2, "0")].join(
+      ":"
+    ) +
+    sep +
+    String(ff).padStart(2, "0")
+  );
+}
+
+/**
+ * Extract a timecode string from raw ffprobe JSON, checking (in priority order):
+ *   1. First video stream tags.timecode
+ *   2. Any data stream with codec_name "tmcd" → tags.timecode
+ *   3. format.tags.timecode
+ * Returns null if no timecode track is found.
+ */
+function extractTimecodeFromProbeJson(probeJsonStr: string | null | undefined): string | null {
+  if (!probeJsonStr) return null;
+  let probe: unknown;
+  try {
+    probe = JSON.parse(probeJsonStr);
+  } catch {
+    return null;
+  }
+  if (typeof probe !== "object" || probe === null) return null;
+  const p = probe as Record<string, unknown>;
+  const streams = Array.isArray(p["streams"]) ? (p["streams"] as unknown[]) : [];
+
+  // 1. Video stream tags
+  for (const s of streams) {
+    if (typeof s !== "object" || s === null) continue;
+    const st = s as Record<string, unknown>;
+    if (st["codec_type"] === "video") {
+      const tc = (st["tags"] as Record<string, unknown> | undefined)?.["timecode"];
+      if (typeof tc === "string" && tc.trim()) return tc.trim();
+    }
+  }
+  // 2. TMCD data stream
+  for (const s of streams) {
+    if (typeof s !== "object" || s === null) continue;
+    const st = s as Record<string, unknown>;
+    if (st["codec_type"] === "data" && st["codec_name"] === "tmcd") {
+      const tc = (st["tags"] as Record<string, unknown> | undefined)?.["timecode"];
+      if (typeof tc === "string" && tc.trim()) return tc.trim();
+    }
+  }
+  // 3. Format tags
+  const format = p["format"] as Record<string, unknown> | undefined;
+  if (format) {
+    const tc = (format["tags"] as Record<string, unknown> | undefined)?.["timecode"];
+    if (typeof tc === "string" && tc.trim()) return tc.trim();
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Stream registry — tracks active ffmpeg processes by client-supplied streamId.
 // Clients must send periodic heartbeats; if none arrive within the timeout the
 // process is killed so it cannot hang indefinitely.
@@ -112,6 +227,7 @@ router.get("/:file_id/stream", (req, res) => {
     | {
         video_codec?: string;
         video_frame_rate?: string;
+        probe_json?: string;
       }
     | undefined;
 
@@ -129,30 +245,57 @@ router.get("/:file_id/stream", (req, res) => {
     "Cache-Control": "no-cache",
   });
 
-  // Escape colons for ffmpeg drawtext filter
-  const fontEscaped = config.watermarkFontPath.replace(/:/g, "\\:");
+  // Monospace font for timecode / frame-number readability
+  const fontEscaped = config.watermarkMonoFontPath.replace(/:/g, "\\:");
 
-  // Calculate the frame number offset for the seek position so the watermark
-  // displays frame numbers relative to the file start, not the transcode start.
-  let frameOffset = 0;
-  if (startSecs > 0 && probe?.video_frame_rate) {
-    // video_frame_rate is stored as a rational string e.g. "30000/1001" or "30/1"
+  // Parse the source frame rate (needed for both TC offset and frame-number display).
+  let fps = 0;
+  if (probe?.video_frame_rate) {
     const parts = probe.video_frame_rate.split("/");
-    const fps = parseFloat(parts[0]) / (parseFloat(parts[1]) || 1);
-    if (fps > 0) frameOffset = Math.round(startSecs * fps);
+    fps = parseFloat(parts[0]) / (parseFloat(parts[1]) || 1);
   }
 
-  // drawtext's start_number option shifts %{frame_num} so that the first
-  // transcoded frame shows the correct absolute frame number from the source file.
-  const startNumberOpt = frameOffset > 0 ? `:start_number=${frameOffset}` : "";
+  // Calculate the frame number offset for the seek position so the watermark
+  // displays values relative to the file start, not the transcode start.
+  let frameOffset = 0;
+  if (startSecs > 0 && fps > 0) {
+    frameOffset = Math.round(startSecs * fps);
+  }
+
+  // If the file carries a timecode track, burn it in; otherwise fall back to
+  // frame number + PTS display (relative to the start of the file).
+  const sourceTimecode = extractTimecodeFromProbeJson(probe?.probe_json);
+  let drawtextContent: string;
+  if (sourceTimecode && fps > 0) {
+    // Advance the source TC by the seek offset so the first rendered frame
+    // shows the correct timecode position within the source file.
+    let startTc = sourceTimecode;
+    if (frameOffset > 0) {
+      const parsed = parseTimecodeStr(sourceTimecode);
+      if (parsed) {
+        const advanced = tcToFrameCount(parsed, fps) + frameOffset;
+        startTc = frameCountToTc(advanced, fps, parsed.dropFrame);
+      }
+    }
+    // Escape colons for ffmpeg drawtext filter (semicolons are safe as-is).
+    const tcEscaped = startTc.replace(/:/g, "\\:");
+    // Use the stored rational frame-rate string directly as timecode_rate.
+    const tcRate = probe?.video_frame_rate ?? String(Math.round(fps));
+    drawtextContent = `timecode='${tcEscaped}':timecode_rate=${tcRate}`;
+  } else {
+    // No timecode track: show frame number and PTS relative to file start.
+    // drawtext's start_number shifts %{frame_num} to the seek offset.
+    const startNumberOpt = frameOffset > 0 ? `:start_number=${frameOffset}` : "";
+    drawtextContent = `text='F%{frame_num}T%{pts}'${startNumberOpt}`;
+  }
+
   const watermark =
     `scale=1280:-2:force_original_aspect_ratio=decrease,format=yuv420p,` +
     // Full-width semi-transparent bar behind the text.
     // y = (ih - fontsize) / 1.5  →  ih*9/15; h = fontsize + 2*padding
     `drawbox=x=0:y=ih*9/15-10:w=iw:h=ih/10+20:color=black@0.2:t=ih,` +
     `drawtext=fontfile='${fontEscaped}'` +
-    `:text='F%{frame_num}T%{pts}'` +
-    startNumberOpt +
+    `:${drawtextContent}` +
     ":fontsize=h/10" +
     ":fontcolor=white@0.3" +
     ":x=(w-text_w)/2" +

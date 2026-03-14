@@ -116,6 +116,22 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     9. Never wrap output in quotes.
 """)
 
+SYSTEM_PROMPT_CONSERVATIVE = textwrap.dedent("""\
+    You make the absolute minimum change to an archival NASA film-reel title so it no longer
+    matches a verbatim text search.
+
+    Rules — follow ALL of them:
+    1. Output ONLY the modified title. No quotes, no explanation, no preamble.
+    2. Change NO MORE than 1 or 2 words in the entire title. Every other word must be kept
+       exactly as written, including all numbers, dates, abbreviations, and proper nouns.
+    3. Acceptable change types: swap a single common word for a direct synonym
+       (e.g. "Part" → "Segment", "Launch" → "Liftoff", "View" → "Shot"),
+       or reorder two adjacent words if it reads naturally.
+    4. Do NOT change acronyms, abbreviations, numbers, names, locations, or dates.
+    5. Do NOT add or remove words — keep word count identical.
+    6. Never wrap output in quotes.
+""")
+
 
 def ensure_column(db: sqlite3.Connection) -> None:
     """Add alternate_title column to film_rolls if it doesn't exist."""
@@ -126,13 +142,19 @@ def ensure_column(db: sqlite3.Connection) -> None:
         print("[migration] film_rolls += alternate_title")
 
 
-def call_ollama(title: str) -> str:
+def call_ollama(title: str, *, conservative: bool = False) -> str:
     """Call Ollama API to generate an alternate title."""
     clean_title = _strip_reel_ids(title)  # remove embedded identifiers before prompting
+    system = SYSTEM_PROMPT_CONSERVATIVE if conservative else SYSTEM_PROMPT
+    prompt = (
+        f"Change only 1 or 2 words in this archival film title:\n{clean_title}"
+        if conservative
+        else f"Rephrase this archival film title:\n{clean_title}"
+    )
     payload = json.dumps({
         "model": MODEL,
-        "prompt": f"Rephrase this archival film title:\n{clean_title}",
-        "system": SYSTEM_PROMPT,
+        "prompt": prompt,
+        "system": system,
         "stream": False,
         "options": {
             "temperature": 0.4,
@@ -193,21 +215,25 @@ def process_batch(
     *,
     dry_run: bool = False,
     workers: int = 3,
-) -> tuple[int, int]:
+    offset: int = 0,
+    global_total: int | None = None,
+) -> tuple[int, int, list[tuple[str, str]]]:
     """Generate alternate titles for a batch of rows using parallel Ollama calls.
 
-    Returns (success, fail) counts.
+    Returns (success, fail, failed_rows) where failed_rows can be retried.
     """
     ok = 0
     fail = 0
     total = len(rows)
+    display_total = global_total if global_total is not None else total
+    failed_rows: list[tuple[str, str]] = []
 
     def _generate(job: tuple[int, str, str]) -> tuple[int, str, str, str]:
         """Call Ollama for one reel; returns (index, ident, title, alt)."""
         idx, ident, title = job
         return idx, ident, title, call_ollama(title)
 
-    jobs = [(i, ident, title) for i, (ident, title) in enumerate(rows, 1)]
+    jobs = [(offset + i, ident, title) for i, (ident, title) in enumerate(rows, 1)]
 
     progress = Progress(
         TextColumn("[progress.description]{task.description}"),
@@ -236,25 +262,47 @@ def process_batch(
                         orig_words = len(clean_orig.split())
                         alt_words = len(alt.split())
                         if alt_words > orig_words * 1.3 + 3:
-                            progress.console.print(f"  [{i}/{total}] {ident}: REJECTED (too wordy: {orig_words}→{alt_words} words)")
-                            progress.console.print(f"    orig: {title}")
-                            progress.console.print(f"    alt:  {alt}")
-                            fail += 1
-                            progress.advance(task)
-                            continue
-
-                        # Validation 2: reject hallucinations — must share significant words
-                        orig_sig = _significant_words(clean_orig)
-                        alt_sig = _significant_words(alt)
-                        if orig_sig and alt_sig:
-                            overlap = len(orig_sig & alt_sig) / len(orig_sig)
-                            if overlap < 0.25:
-                                progress.console.print(f"  [{i}/{total}] {ident}: REJECTED (hallucination — {overlap:.0%} word overlap)")
+                            progress.console.print(f"  [{i}/{display_total}] {ident}: too wordy ({orig_words}→{alt_words}), trying conservative fallback...")
+                            alt = _strip_reel_ids(call_ollama(title, conservative=True))
+                            alt_words = len(alt.split())
+                            if alt_words > orig_words * 1.3 + 3:
+                                progress.console.print(f"  [{i}/{display_total}] {ident}: FAILED (still too wordy after fallback)")
                                 progress.console.print(f"    orig: {title}")
                                 progress.console.print(f"    alt:  {alt}")
                                 fail += 1
+                                failed_rows.append((ident, title))
                                 progress.advance(task)
                                 continue
+
+                        # Validation 2: reject hallucinations — must share significant words.
+                        # Short titles (≤3 sig words) need a stricter threshold because a single
+                        # substituted word causes a large percentage drop.
+                        # Titles with ≤2 sig words are skipped for overlap — a synonym swap will
+                        # always land at 0% and there's no better option for single-concept titles.
+                        orig_sig = _significant_words(clean_orig)
+                        alt_sig = _significant_words(alt)
+                        alt_sig_count = len(alt_sig)
+                        overlap_threshold = 0.50 if len(orig_sig) <= 3 else 0.25
+                        skip_overlap = len(orig_sig) <= 2
+                        if orig_sig and alt_sig and not skip_overlap:
+                            overlap = len(orig_sig & alt_sig) / len(orig_sig)
+                            word_count_ok = alt_sig_count <= len(orig_sig) + 1
+                            if overlap < overlap_threshold or not word_count_ok:
+                                reason = f"{overlap:.0%} word overlap" if overlap < overlap_threshold else "added significant words"
+                                progress.console.print(f"  [{i}/{display_total}] {ident}: {reason}, trying conservative fallback...")
+                                alt = _strip_reel_ids(call_ollama(title, conservative=True))
+                                alt_sig = _significant_words(alt)
+                                alt_sig_count = len(alt_sig)
+                                overlap = len(orig_sig & alt_sig) / len(orig_sig) if orig_sig else 1.0
+                                word_count_ok = alt_sig_count <= len(orig_sig) + 1
+                                if overlap < overlap_threshold or not word_count_ok:
+                                    progress.console.print(f"  [{i}/{display_total}] {ident}: FAILED (still {overlap:.0%} overlap after fallback)")
+                                    progress.console.print(f"    orig: {title}")
+                                    progress.console.print(f"    alt:  {alt}")
+                                    fail += 1
+                                    failed_rows.append((ident, title))
+                                    progress.advance(task)
+                                    continue
 
                         if not dry_run:
                             db.execute(
@@ -264,16 +312,18 @@ def process_batch(
                             db.commit()
 
                         status = "DRY-RUN" if dry_run else "OK"
-                        progress.console.print(f"  [{i}/{total}] {ident}: {status}")
+                        progress.console.print(f"  [{i}/{display_total}] {ident}: {status}")
                         progress.console.print(f"    orig: {title}")
                         progress.console.print(f"    alt:  {alt}")
                         ok += 1
                     except urllib.error.URLError as exc:
-                        progress.console.print(f"  [{i}/{total}] {ident}: ERROR - {exc}")
+                        progress.console.print(f"  [{i}/{display_total}] {ident}: ERROR - {exc}")
                         fail += 1
+                        failed_rows.append((ident, title))
                     except Exception as exc:
-                        progress.console.print(f"  [{i}/{total}] {ident}: ERROR - {exc}")
+                        progress.console.print(f"  [{i}/{display_total}] {ident}: ERROR - {exc}")
                         fail += 1
+                        failed_rows.append((ident, title))
                     finally:
                         progress.advance(task)
             except KeyboardInterrupt:
@@ -282,7 +332,7 @@ def process_batch(
                     f.cancel()
                 raise
 
-    return ok, fail
+    return ok, fail, failed_rows
 
 
 def main() -> None:
@@ -291,6 +341,7 @@ def main() -> None:
     parser.add_argument("--all", action="store_true", help="Process ALL reels missing an alternate title")
     parser.add_argument("--force", action="store_true", help="Force-regenerate titles for ALL reels (including existing titles)")
     parser.add_argument("--ids", nargs="+", help="Process specific reel identifiers")
+    parser.add_argument("--skip", type=int, default=0, metavar="N", help="Skip the first N records (use with --force/--all to resume; e.g. --skip 10381 resumes at record 10382)")
     parser.add_argument("--dry-run", action="store_true", help="Print results without writing to DB")
     args = parser.parse_args()
 
@@ -314,6 +365,11 @@ def main() -> None:
         rows = fetch_sample(db, args.sample)
         print(f"Processing {len(rows)} random reels...")
 
+    if args.skip and not args.ids:
+        total_before = len(rows)
+        rows = rows[args.skip:]
+        print(f"Skipping first {args.skip} records — resuming at record {args.skip + 1} ({len(rows)} remaining of {total_before})")
+
     if not rows:
         print("No reels to process.")
         db.close()
@@ -321,12 +377,27 @@ def main() -> None:
 
     t0 = time.time()
     try:
-        ok, fail = process_batch(db, rows, dry_run=args.dry_run)
+        ok, fail, failed_rows = process_batch(db, rows, dry_run=args.dry_run, offset=args.skip, global_total=total_before if args.skip else None)
     except KeyboardInterrupt:
         elapsed = time.time() - t0
         print(f"\nInterrupted after {elapsed:.1f}s. Progress saved to DB.")
         db.close()
         sys.exit(1)
+
+    # Automatic single retry pass for anything that failed
+    if failed_rows:
+        print(f"\nRetrying {len(failed_rows)} failed record(s)...")
+        try:
+            r_ok, r_fail, _ = process_batch(db, failed_rows, dry_run=args.dry_run)
+        except KeyboardInterrupt:
+            elapsed = time.time() - t0
+            print(f"\nInterrupted after {elapsed:.1f}s. Progress saved to DB.")
+            db.close()
+            sys.exit(1)
+        ok += r_ok
+        fail = r_fail  # only count still-failing after retry
+        if r_ok:
+            print(f"  Retry recovered {r_ok}/{len(failed_rows)} previously failed records")
     elapsed = time.time() - t0
 
     print(f"\nDone: {ok} succeeded, {fail} failed in {elapsed:.1f}s")
