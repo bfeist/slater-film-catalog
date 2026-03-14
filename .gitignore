@@ -4,7 +4,8 @@ node_modules/
  Data directory - all catalog JSON, intermediate files
 data/
 input_indexes/
-
+# Expert review exports (files_audit temporary output)
+scripts/files_audit/exports/
 # SQLite catalog database
 database/
 
