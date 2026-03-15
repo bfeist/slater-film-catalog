@@ -1,0 +1,52 @@
+.discoveryEntries {
+  margin-bottom: 1.5rem;
+}
+
+.discoveryEntries h3 {
+  color: var(--color-text-secondary);
+  font-size: 0.9em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.5rem;
+}
+
+.entry {
+  border: 1px solid var(--color-border-subtle);
+  padding: 0.6rem;
+  margin: 0.5rem 0;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+}
+
+.dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.75rem;
+  margin: 0;
+  font-size: 0.85em;
+}
+
+.dl dt {
+  color: var(--color-text-muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dl dd {
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+.shotlistRaw {
+  white-space: pre-wrap;
+  font-size: 0.8em;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--color-bg-inset);
+  color: var(--color-text-primary);
+  padding: 0.5rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  margin-top: 0.3rem;
+  font-family: "Cascadia Code", "Fira Code", monospace;
+}

@@ -1,0 +1,143 @@
+/* ---------------------------------------------------------------------------
+   Global reset and base styles — applied once, not per-component.
+   --------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  background: var(--color-bg-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  min-height: 100vh;
+}
+
+a {
+  color: var(--color-link);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+a:hover {
+  color: var(--color-link-hover);
+  text-decoration: underline;
+}
+
+code {
+  font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
+  font-size: 0.9em;
+  background: var(--color-bg-overlay);
+  color: var(--color-text-primary);
+  padding: 0.15em 0.35em;
+  border-radius: var(--radius-sm);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  background: var(--color-btn-bg);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-btn-border);
+  padding: 0.35em 0.8em;
+  border-radius: var(--radius-sm);
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+button:hover {
+  background: var(--color-btn-hover-bg);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+input[type="text"],
+select {
+  font: inherit;
+  padding: 0.4em 0.6em;
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-input-bg);
+  color: var(--color-text-primary);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+input[type="text"]:focus,
+select:focus {
+  outline: none;
+  border-color: var(--color-input-focus-border);
+  box-shadow: 0 0 0 3px var(--color-accent-muted);
+}
+
+/* Utility classes */
+.muted {
+  color: var(--color-text-muted);
+}
+
+.mono-cell {
+  font-family: "Cascadia Code", "Fira Code", monospace;
+  font-size: 0.85em;
+  word-break: break-all;
+}
+
+.path-cell {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Cascadia Code", "Fira Code", monospace;
+  font-size: 0.85em;
+}
+
+/* Quality badge tier colours — shared between components */
+.quality-bucket-prores-4k {
+  color: var(--quality-prores-4k-fg);
+  background: var(--quality-prores-4k-bg);
+  border-color: var(--quality-prores-4k-border);
+}
+
+.quality-bucket-prores-hd {
+  color: var(--quality-prores-hd-fg);
+  background: var(--quality-prores-hd-bg);
+  border-color: var(--quality-prores-hd-border);
+}
+
+.quality-bucket-prores-sd {
+  color: var(--quality-prores-sd-fg);
+  background: var(--quality-prores-sd-bg);
+  border-color: var(--quality-prores-sd-border);
+}
+
+.quality-bucket-h264-hd {
+  color: var(--quality-h264-hd-fg);
+  background: var(--quality-h264-hd-bg);
+  border-color: var(--quality-h264-hd-border);
+}
+
+.quality-bucket-proxy {
+  color: var(--quality-proxy-fg);
+  background: var(--quality-proxy-bg);
+  border-color: var(--quality-proxy-border);
+}

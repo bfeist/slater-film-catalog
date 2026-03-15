@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { fetchReelDetail } from "../api/client";
 import type { ReelDetailResponse } from "../types";
 import ReelDetailContent from "../components/ReelDetailContent";
+import styles from "./ReelPage.module.css";
 
 export default function ReelPage(): JSX.Element {
   const { identifier } = useParams<{ identifier: string }>();
@@ -26,13 +27,13 @@ export default function ReelPage(): JSX.Element {
       .finally(() => setLoading(false));
   }, [identifier]);
 
-  if (loading) return <div className="loading">Loading…</div>;
-  if (error) return <div className="error-msg">Error: {error}</div>;
-  if (!data) return <div className="error-msg">No data</div>;
+  if (loading) return <div className={styles.loading}>Loading…</div>;
+  if (error) return <div className={styles.errorMsg}>Error: {error}</div>;
+  if (!data) return <div className={styles.errorMsg}>No data</div>;
 
   return (
-    <div className="reel-page">
-      <div className="breadcrumb">
+    <div className={styles.reelPage}>
+      <div className={styles.breadcrumb}>
         <Link to="/">Search</Link> › <strong>{data.reel.identifier}</strong>
       </div>
       <ReelDetailContent data={data} />

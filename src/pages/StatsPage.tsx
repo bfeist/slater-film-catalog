@@ -2,6 +2,7 @@ import { useState, useEffect, type JSX } from "react";
 import prettyBytes from "pretty-bytes";
 import { fetchStats } from "../api/client";
 import type { StatsResponse } from "../types";
+import styles from "./StatsPage.module.css";
 
 export default function StatsPage(): JSX.Element {
   const [stats, setStats] = useState<StatsResponse | null>(null);
@@ -14,8 +15,8 @@ export default function StatsPage(): JSX.Element {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="loading">Loading stats…</div>;
-  if (!stats) return <div className="error-msg">Failed to load stats.</div>;
+  if (loading) return <div className={styles.loading}>Loading stats…</div>;
+  if (!stats) return <div className={styles.errorMsg}>Failed to load stats.</div>;
 
   const items = [
     { label: "Film Rolls", value: stats.film_rolls },
@@ -33,15 +34,15 @@ export default function StatsPage(): JSX.Element {
   ];
 
   return (
-    <div className="stats-page">
+    <div className={styles.statsPage}>
       <h2>Database Overview</h2>
-      <div className="stats-grid">
+      <div className={styles.statsGrid}>
         {items.map((item) => (
-          <div key={item.label} className="stat-card">
-            <div className="stat-value">
+          <div key={item.label} className={styles.statCard}>
+            <div className={styles.statValue}>
               {"formatted" in item && item.formatted ? item.formatted : item.value.toLocaleString()}
             </div>
-            <div className="stat-label">{item.label}</div>
+            <div className={styles.statLabel}>{item.label}</div>
           </div>
         ))}
       </div>

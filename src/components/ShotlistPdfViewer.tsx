@@ -1,8 +1,12 @@
-import { useState, useEffect, useCallback, useMemo, useRef, type JSX } from "react";
+import { useState, useEffect, useMemo, useRef, type JSX } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
+import * as Dialog from "@radix-ui/react-dialog";
+import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import { shotlistPdfUrl } from "../api/client";
+import clsx from "clsx";
+import styles from "./ShotlistPdfViewer.module.css";
 
 // Configure pdfjs worker — Vite resolves this URL at build time.
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -51,19 +55,6 @@ export default function ShotlistPdfViewer({
     }
   }, []);
 
-  // Close on Escape key
-  const onKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    },
-    [onClose]
-  );
-
-  useEffect(() => {
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onKeyDown]);
-
   const tabLabel = (filename: string, index: number): string =>
     isAuthed ? filename.replace(".pdf", "") : `Document ${index + 1}`;
 
@@ -80,75 +71,79 @@ export default function ShotlistPdfViewer({
   );
 
   return (
-    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
-    <div className="pdf-viewer-overlay" onClick={onClose}>
-      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
-      <div className="pdf-viewer-container" onClick={(e) => e.stopPropagation()}>
-        <div className="pdf-viewer-header">
-          <span className="pdf-viewer-title">Shot List — {identifier}</span>
-          <button className="pdf-viewer-close" onClick={onClose}>
-            ✕
-          </button>
-        </div>
+    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className={styles.overlay} />
+        <Dialog.Content className={styles.container} aria-describedby={undefined}>
+          <VisuallyHidden.Root>
+            <Dialog.Description>Shot list PDF viewer for {identifier}</Dialog.Description>
+          </VisuallyHidden.Root>
+          <div className={styles.header}>
+            <Dialog.Title className={styles.title}>Shot List — {identifier}</Dialog.Title>
+            <Dialog.Close asChild>
+              <button className={styles.closeBtn}>✕</button>
+            </Dialog.Close>
+          </div>
 
-        {/* Tab bar — labels are generic for unauthenticated users */}
-        {pdfs.length > 1 && (
-          <div className="pdf-viewer-tabs">
-            {pdfs.map((filename, i) => (
-              <button
-                key={filename}
-                className={`pdf-viewer-tab${activePdf === filename ? " pdf-viewer-tab-active" : ""}`}
-                onClick={() => {
-                  setActivePdf(filename);
+          {/* Tab bar — labels are generic for unauthenticated users */}
+          {pdfs.length > 1 && (
+            <div className={styles.tabs}>
+              {pdfs.map((filename, i) => (
+                <button
+                  key={filename}
+                  className={clsx(styles.tab, activePdf === filename && styles.tabActive)}
+                  onClick={() => {
+                    setActivePdf(filename);
+                    setPageNumber(1);
+                  }}
+                >
+                  {tabLabel(filename, i)}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className={styles.body} ref={bodyRef}>
+            {pdfs.length === 0 && (
+              <div className="muted" style={{ padding: "2rem", textAlign: "center" }}>
+                No shotlist PDFs found for {identifier}.
+              </div>
+            )}
+            {pdfFile && (
+              <Document
+                file={pdfFile}
+                className={styles.document}
+                onLoadSuccess={({ numPages: n }) => {
+                  setNumPages(n);
                   setPageNumber(1);
                 }}
               >
-                {tabLabel(filename, i)}
-              </button>
-            ))}
+                <Page
+                  pageNumber={pageNumber}
+                  width={pageWidth}
+                  renderAnnotationLayer
+                  renderTextLayer
+                />
+              </Document>
+            )}
           </div>
-        )}
 
-        <div className="pdf-viewer-body" ref={bodyRef}>
-          {pdfs.length === 0 && (
-            <div className="muted" style={{ padding: "2rem", textAlign: "center" }}>
-              No shotlist PDFs found for {identifier}.
+          {numPages > 1 && (
+            <div className={clsx(styles.tabs, styles.pageTabs)}>
+              <span className={styles.pageLabel}>Page</span>
+              {Array.from({ length: numPages }, (_, i) => i + 1).map((n) => (
+                <button
+                  key={n}
+                  className={clsx(styles.tab, pageNumber === n && styles.tabActive)}
+                  onClick={() => setPageNumber(n)}
+                >
+                  {n}
+                </button>
+              ))}
             </div>
           )}
-          {pdfFile && (
-            <Document
-              file={pdfFile}
-              className="pdf-viewer-document"
-              onLoadSuccess={({ numPages: n }) => {
-                setNumPages(n);
-                setPageNumber(1);
-              }}
-            >
-              <Page
-                pageNumber={pageNumber}
-                width={pageWidth}
-                renderAnnotationLayer
-                renderTextLayer
-              />
-            </Document>
-          )}
-        </div>
-
-        {numPages > 1 && (
-          <div className="pdf-viewer-tabs pdf-viewer-page-tabs">
-            <span className="pdf-viewer-page-label">Page</span>
-            {Array.from({ length: numPages }, (_, i) => i + 1).map((n) => (
-              <button
-                key={n}
-                className={`pdf-viewer-tab${pageNumber === n ? " pdf-viewer-tab-active" : ""}`}
-                onClick={() => setPageNumber(n)}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

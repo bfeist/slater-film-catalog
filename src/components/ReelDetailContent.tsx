@@ -10,6 +10,7 @@ import FileInfoCard from "./FileInfoCard";
 import DiscoveryEntries from "./DiscoveryEntries";
 import VideoPlayer from "./VideoPlayer";
 import ShotlistPdfViewer from "./ShotlistPdfViewer";
+import styles from "./ReelDetailContent.module.css";
 
 interface ReelDetailContentProps {
   data: ReelDetailResponse;
@@ -42,17 +43,17 @@ export default function ReelDetailContent({ data }: ReelDetailContentProps): JSX
   return (
     <>
       {/* ---- Reel header ---- */}
-      <section className="reel-header-section">
+      <section className={styles.headerSection}>
         <h2>{reel.identifier}</h2>
         {(() => {
           const displayTitle = revealed ? reel.title : (reel.alternate_title ?? reel.title);
-          return displayTitle ? <p className="reel-title">{displayTitle}</p> : null;
+          return displayTitle ? <p className={styles.reelTitle}>{displayTitle}</p> : null;
         })()}
         {revealed && reel.orig_title && reel.orig_title !== reel.title && (
           <p className="muted">Original title: {reel.orig_title}</p>
         )}
 
-        <dl className="reel-meta-dl">
+        <dl className={styles.metaDl}>
           {revealed && (
             <>
               <dt>Prefix</dt>
@@ -115,7 +116,7 @@ export default function ReelDetailContent({ data }: ReelDetailContentProps): JSX
             {reel.has_shotlist_pdf ? (
               <>
                 Yes{" "}
-                <button className="shotlist-pdf-btn" onClick={() => setShowShotlist(true)}>
+                <button className={styles.shotlistPdfBtn} onClick={() => setShowShotlist(true)}>
                   View PDF
                 </button>
               </>
@@ -126,14 +127,14 @@ export default function ReelDetailContent({ data }: ReelDetailContentProps): JSX
         </dl>
 
         {reel.description && (
-          <div className="reel-description">
+          <div className={styles.description}>
             <h3>Description</h3>
             <p>{reel.description}</p>
           </div>
         )}
 
         {reel.notes && (
-          <div className="reel-notes">
+          <div className={styles.notes}>
             <h3>Notes</h3>
             <p>{reel.notes}</p>
           </div>
@@ -141,12 +142,12 @@ export default function ReelDetailContent({ data }: ReelDetailContentProps): JSX
       </section>
 
       {/* ---- Transfers ---- */}
-      <section>
+      <section className={styles.section}>
         <TransferList transfers={transfers} revealed={revealed} />
       </section>
 
       {/* ---- Files on disk ---- */}
-      <section className="files-section">
+      <section className={styles.filesSection}>
         <h3>Files on Disk ({fileMatches.length})</h3>
         {fileMatches.length === 0 ? (
           <p className="muted">No files matched on disk.</p>
@@ -180,20 +181,22 @@ export default function ReelDetailContent({ data }: ReelDetailContentProps): JSX
       </section>
 
       {/* ---- Discovery shotlist ---- */}
-      <section>
+      <section className={styles.section}>
         <DiscoveryEntries entries={discoveryEntries} revealed={revealed} />
       </section>
 
       {/* ---- NARA Citations (revealed users only) ---- */}
       {revealed && naraCitations.length > 0 && (
-        <section className="nara-citations-section">
+        <section className={styles.naraCitationsSection}>
           <h3>NARA Citations ({naraCitations.length})</h3>
-          <ul className="nara-citation-list">
+          <ul className={styles.citationList}>
             {naraCitations.map((c) => (
               <li key={c.id}>
                 <code>{c.citation}</code>
                 {c.citation_type && c.citation_type !== "other" && (
-                  <span className="citation-type-badge">{c.citation_type.replace(/_/g, " ")}</span>
+                  <span className={styles.citationTypeBadge}>
+                    {c.citation_type.replace(/_/g, " ")}
+                  </span>
                 )}
               </li>
             ))}
@@ -203,12 +206,14 @@ export default function ReelDetailContent({ data }: ReelDetailContentProps): JSX
 
       {/* ---- External Online Sources ---- */}
       {externalRefs.length > 0 && (
-        <section className="ext-refs-section">
+        <section className={styles.extRefsSection}>
           <h3>External Online Sources ({externalRefs.length})</h3>
-          <ul className="ext-ref-list">
+          <ul className={styles.extRefList}>
             {externalRefs.map((ref) => (
               <li key={ref.id}>
-                <span className="ext-ref-type">{(ref.ref_type ?? "file").replace(/_/g, " ")}</span>
+                <span className={styles.extRefType}>
+                  {(ref.ref_type ?? "file").replace(/_/g, " ")}
+                </span>
                 {" — "}
                 <a href={ref.url} target="_blank" rel="noopener noreferrer">
                   {ref.filename ?? ref.url}
@@ -220,7 +225,7 @@ export default function ReelDetailContent({ data }: ReelDetailContentProps): JSX
       )}
 
       {/* ---- Future sections ---- */}
-      <section className="future-stub">
+      <section className={styles.futureStub}>
         <h3>Scene Detection</h3>
         <p className="muted">Coming soon — will show detected scene boundaries for this reel.</p>
       </section>

@@ -1,0 +1,156 @@
+/* ---------------------------------------------------------------------------
+   NASA Slater Film Catalog — Theme Variables
+   Dark-first design inspired by archival film databases.
+   --------------------------------------------------------------------------- */
+
+/* ---- Dark theme (default) ---- */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Surface hierarchy */
+  --color-bg-base: #0e1117;
+  --color-bg-surface: #161b22;
+  --color-bg-elevated: #1c2128;
+  --color-bg-overlay: #21262d;
+  --color-bg-inset: #0d1117;
+
+  /* Borders */
+  --color-border-default: #30363d;
+  --color-border-muted: #21262d;
+  --color-border-subtle: #1b1f24;
+
+  /* Text */
+  --color-text-primary: #e6edf3;
+  --color-text-secondary: #8b949e;
+  --color-text-muted: #6e7681;
+  --color-text-on-emphasis: #ffffff;
+
+  /* Links */
+  --color-link: #58a6ff;
+  --color-link-hover: #79c0ff;
+
+  /* Accents */
+  --color-accent: #58a6ff;
+  --color-accent-emphasis: #388bfd;
+  --color-accent-muted: rgb(56 139 253 / 15%);
+
+  /* Feedback */
+  --color-danger: #f85149;
+  --color-danger-subtle: rgb(248 81 73 / 10%);
+  --color-success: #3fb950;
+  --color-success-subtle: rgb(63 185 80 / 10%);
+
+  /* Interactive */
+  --color-btn-bg: #21262d;
+  --color-btn-border: #363b42;
+  --color-btn-hover-bg: #30363d;
+  --color-btn-active-bg: rgb(177 186 196 / 20%);
+  --color-btn-primary-bg: #238636;
+  --color-btn-primary-hover-bg: #2ea043;
+
+  /* Input */
+  --color-input-bg: #0d1117;
+  --color-input-border: #30363d;
+  --color-input-focus-border: #58a6ff;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-md: 0 3px 6px rgb(0 0 0 / 40%);
+  --shadow-lg: 0 8px 24px rgb(0 0 0 / 50%);
+  --shadow-overlay: 0 16px 48px rgb(0 0 0 / 60%);
+
+  /* Sticky header backdrop */
+  --color-header-bg: rgb(14 17 23 / 85%);
+  --color-toolbar-bg: rgb(22 27 34 / 95%);
+  --backdrop-blur: blur(12px);
+
+  /* Quality tier badges (dark-friendly) */
+  --quality-prores-4k-bg: rgb(255 166 0 / 15%);
+  --quality-prores-4k-fg: #ffa600;
+  --quality-prores-4k-border: rgb(255 166 0 / 40%);
+  --quality-prores-hd-bg: rgb(88 166 255 / 15%);
+  --quality-prores-hd-fg: #58a6ff;
+  --quality-prores-hd-border: rgb(88 166 255 / 40%);
+  --quality-prores-sd-bg: rgb(63 185 160 / 15%);
+  --quality-prores-sd-fg: #3fb9a0;
+  --quality-prores-sd-border: rgb(63 185 160 / 40%);
+  --quality-h264-hd-bg: rgb(63 185 80 / 15%);
+  --quality-h264-hd-fg: #3fb950;
+  --quality-h264-hd-border: rgb(63 185 80 / 40%);
+  --quality-proxy-bg: rgb(139 148 158 / 15%);
+  --quality-proxy-fg: #8b949e;
+  --quality-proxy-border: rgb(139 148 158 / 40%);
+
+  /* Layout */
+  --layout-max-width: 1400px;
+  --layout-header-height: 48px;
+  --search-toolbar-height: 120px;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* Transitions */
+  --transition-fast: 120ms ease;
+  --transition-normal: 200ms ease;
+}
+
+/* ---- Light theme ---- */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --color-bg-base: #ffffff;
+  --color-bg-surface: #f6f8fa;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: #f3f4f6;
+  --color-bg-inset: #eff2f5;
+  --color-border-default: #d0d7de;
+  --color-border-muted: #d8dee4;
+  --color-border-subtle: #e8ecf0;
+  --color-text-primary: #1f2328;
+  --color-text-secondary: #656d76;
+  --color-text-muted: #8b949e;
+  --color-text-on-emphasis: #ffffff;
+  --color-link: #0969da;
+  --color-link-hover: #0550ae;
+  --color-accent: #0969da;
+  --color-accent-emphasis: #0550ae;
+  --color-accent-muted: rgb(9 105 218 / 10%);
+  --color-danger: #cf222e;
+  --color-danger-subtle: rgb(207 34 46 / 8%);
+  --color-success: #1a7f37;
+  --color-success-subtle: rgb(26 127 55 / 8%);
+  --color-btn-bg: #f6f8fa;
+  --color-btn-border: #d0d7de;
+  --color-btn-hover-bg: #eaeef2;
+  --color-btn-active-bg: rgb(208 215 222 / 40%);
+  --color-btn-primary-bg: #2da44e;
+  --color-btn-primary-hover-bg: #2c974b;
+  --color-input-bg: #ffffff;
+  --color-input-border: #d0d7de;
+  --color-input-focus-border: #0969da;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 7%);
+  --shadow-md: 0 3px 6px rgb(0 0 0 / 10%);
+  --shadow-lg: 0 8px 24px rgb(0 0 0 / 12%);
+  --shadow-overlay: 0 16px 48px rgb(0 0 0 / 15%);
+  --color-header-bg: rgb(255 255 255 / 85%);
+  --color-toolbar-bg: rgb(246 248 250 / 95%);
+  --backdrop-blur: blur(12px);
+  --quality-prores-4k-bg: #fff3cd;
+  --quality-prores-4k-fg: #7a4d00;
+  --quality-prores-4k-border: #e8bf40;
+  --quality-prores-hd-bg: #ddeeff;
+  --quality-prores-hd-fg: #003d99;
+  --quality-prores-hd-border: #4488dd;
+  --quality-prores-sd-bg: #d4f0ef;
+  --quality-prores-sd-fg: #005c5c;
+  --quality-prores-sd-border: #2aab9e;
+  --quality-h264-hd-bg: #d4f0e0;
+  --quality-h264-hd-fg: #1a5200;
+  --quality-h264-hd-border: #2aab72;
+  --quality-proxy-bg: #eeeeee;
+  --quality-proxy-fg: #555555;
+  --quality-proxy-border: #aaaaaa;
+}

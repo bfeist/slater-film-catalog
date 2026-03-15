@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import type { Transfer } from "../types";
+import styles from "./TransferList.module.css";
 
 interface TransferListProps {
   transfers: Transfer[];
@@ -15,9 +16,9 @@ export default function TransferList({
   }
 
   return (
-    <div className="transfer-list">
+    <div className={styles.transferList}>
       <h3>Transfers ({transfers.length})</h3>
-      <table className="detail-table">
+      <table className={styles.table}>
         <thead>
           <tr>
             <th>Type</th>

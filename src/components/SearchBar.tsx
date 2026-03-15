@@ -1,6 +1,8 @@
 import { useState, type FormEvent, type JSX } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faXmark } from "@fortawesome/free-solid-svg-icons";
+import * as Checkbox from "@radix-ui/react-checkbox";
+import styles from "./SearchBar.module.css";
 
 interface SearchBarProps {
   initialQuery?: string;
@@ -30,8 +32,8 @@ export default function SearchBar({
   }
 
   return (
-    <form className="search-bar" onSubmit={handleSubmit}>
-      <div className="search-input-wrapper">
+    <form className={styles.searchBar} onSubmit={handleSubmit}>
+      <div className={styles.inputWrapper}>
         <input
           type="text"
           placeholder={
@@ -41,12 +43,12 @@ export default function SearchBar({
           }
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="search-input"
+          className={styles.input}
         />
         {query && (
           <button
             type="button"
-            className="search-clear-btn"
+            className={styles.clearBtn}
             onClick={handleClear}
             aria-label="Clear search"
           >
@@ -55,16 +57,21 @@ export default function SearchBar({
         )}
       </div>
       {revealed !== false && (
-        <label className="search-checkbox">
-          <input
-            type="checkbox"
+        <label className={styles.checkbox} htmlFor="has-transfer-checkbox">
+          <Checkbox.Root
+            id="has-transfer-checkbox"
+            className={styles.checkboxRoot}
             checked={hasTransfer}
-            onChange={(e) => setHasTransfer(e.target.checked)}
-          />
+            onCheckedChange={(checked) => setHasTransfer(checked === true)}
+          >
+            <Checkbox.Indicator className={styles.checkboxIndicator}>✓</Checkbox.Indicator>
+          </Checkbox.Root>
           Has transfer on disk
         </label>
       )}
-      <button type="submit">Search</button>
+      <button type="submit" className={styles.submitBtn}>
+        Search
+      </button>
     </form>
   );
 }

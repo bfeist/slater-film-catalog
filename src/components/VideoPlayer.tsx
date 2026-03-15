@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { videoStreamUrl, videoHeartbeat, videoStop } from "../api/client";
 import { formatDuration } from "../utils/format";
+import styles from "./VideoPlayer.module.css";
 
 interface VideoPlayerProps {
   fileId: number;
@@ -162,18 +163,18 @@ export default function VideoPlayer({
   const progressFraction = duration > 0 ? Math.min(1, displayTime / duration) : 0;
 
   return (
-    <div className="video-player-overlay">
-      <div className="video-player-container">
-        <div className="video-player-header">
+    <div className={styles.overlay}>
+      <div className={styles.container}>
+        <div className={styles.header}>
           <span>{filename}</span>
           <button onClick={onClose}>✕ Close</button>
         </div>
 
-        <div className="video-element-wrapper">
+        <div className={styles.videoWrapper}>
           <video
             ref={videoRef}
             autoPlay
-            className="video-element"
+            className={styles.videoElement}
             src={streamUrl}
             onClick={togglePlay}
           >
@@ -182,29 +183,32 @@ export default function VideoPlayer({
         </div>
 
         {/* Custom controls bar */}
-        <div className="vp-controls">
-          <button className="vp-play-btn" onClick={togglePlay}>
+        <div className={styles.controls}>
+          <button className={styles.playBtn} onClick={togglePlay}>
             {isPlaying ? "❚❚" : "▶"}
           </button>
 
           {/* Scrubber track */}
-          <div className="vp-scrubber" ref={scrubberRef} onPointerDown={onScrubPointerDown}>
-            <div className="vp-scrubber-fill" style={{ width: `${progressFraction * 100}%` }} />
-            <div className="vp-scrubber-thumb" style={{ left: `${progressFraction * 100}%` }} />
+          <div className={styles.scrubber} ref={scrubberRef} onPointerDown={onScrubPointerDown}>
+            <div className={styles.scrubberFill} style={{ width: `${progressFraction * 100}%` }} />
+            <div className={styles.scrubberThumb} style={{ left: `${progressFraction * 100}%` }} />
             {/* Tooltip showing time while dragging */}
             {dragTime !== null && (
-              <div className="vp-scrubber-tooltip" style={{ left: `${progressFraction * 100}%` }}>
+              <div
+                className={styles.scrubberTooltip}
+                style={{ left: `${progressFraction * 100}%` }}
+              >
                 {formatDuration(dragTime)}
               </div>
             )}
           </div>
 
-          <span className="vp-time">
+          <span className={styles.time}>
             {formatDuration(displayTime)} / {formatDuration(duration || null)}
           </span>
         </div>
 
-        <div className="video-player-info muted">
+        <div className={styles.info}>
           Streaming file #{fileId}. Seek restarts the transcode from the selected position.
         </div>
       </div>

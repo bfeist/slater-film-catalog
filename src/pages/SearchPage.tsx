@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, type JSX } from "react";
 import { useSearchParams } from "react-router-dom";
+import clsx from "clsx";
 import SearchBar from "../components/SearchBar";
 import ReelTable from "../components/ReelTable";
 import ReelDetailModal from "../components/ReelDetailModal";
 import { searchReels } from "../api/client";
 import { QUALITY_BUCKETS } from "../utils/qualityBuckets";
 import type { FilmReel } from "../types";
+import styles from "./SearchPage.module.css";
 
 const PAGE_SIZE = 50;
 
@@ -27,9 +29,9 @@ function PaginationBar({
   for (let p = start; p <= end; p++) pageNums.push(p);
 
   return (
-    <div className="pagination-bar" role="navigation" aria-label="Pagination">
+    <div className={styles.paginationBar} role="navigation" aria-label="Pagination">
       <button
-        className="pagination-btn"
+        className={styles.paginationBtn}
         disabled={currentPage === 1}
         onClick={() => onPageChange(currentPage - 1)}
       >
@@ -38,17 +40,17 @@ function PaginationBar({
 
       {start > 1 && (
         <>
-          <button className="pagination-btn" onClick={() => onPageChange(1)}>
+          <button className={styles.paginationBtn} onClick={() => onPageChange(1)}>
             1
           </button>
-          {start > 2 && <span className="pagination-ellipsis">…</span>}
+          {start > 2 && <span className={styles.paginationEllipsis}>…</span>}
         </>
       )}
 
       {pageNums.map((p) => (
         <button
           key={p}
-          className={`pagination-btn${p === currentPage ? " active" : ""}`}
+          className={clsx(styles.paginationBtn, p === currentPage && styles.paginationBtnActive)}
           onClick={() => onPageChange(p)}
           aria-current={p === currentPage ? "page" : undefined}
         >
@@ -58,15 +60,15 @@ function PaginationBar({
 
       {end < totalPages && (
         <>
-          {end < totalPages - 1 && <span className="pagination-ellipsis">…</span>}
-          <button className="pagination-btn" onClick={() => onPageChange(totalPages)}>
+          {end < totalPages - 1 && <span className={styles.paginationEllipsis}>…</span>}
+          <button className={styles.paginationBtn} onClick={() => onPageChange(totalPages)}>
             {totalPages}
           </button>
         </>
       )}
 
       <button
-        className="pagination-btn"
+        className={styles.paginationBtn}
         disabled={currentPage === totalPages}
         onClick={() => onPageChange(currentPage + 1)}
       >
@@ -164,9 +166,9 @@ export default function SearchPage(): JSX.Element {
   const end = Math.min(currentPage * PAGE_SIZE, total);
 
   return (
-    <div className="search-page">
+    <div className={styles.searchPage}>
       {/* ---- Sticky toolbar: search bar + quality filters + result count ---- */}
-      <div className="search-toolbar-sticky" ref={toolbarRef}>
+      <div className={styles.searchToolbarSticky} ref={toolbarRef}>
         <SearchBar
           initialQuery={q}
           initialHasTransfer={effectiveHasTransfer}
@@ -174,11 +176,11 @@ export default function SearchPage(): JSX.Element {
           revealed={revealed}
         />
 
-        <div className="quality-filter-bar">
-          <span className="quality-filter-label">Quality:</span>
+        <div className={styles.qualityFilterBar}>
+          <span className={styles.qualityFilterLabel}>Quality:</span>
           <button
             type="button"
-            className={`quality-filter-btn${!qualityBucket ? " active" : ""}`}
+            className={clsx(styles.qualityFilterBtn, !qualityBucket && styles.active)}
             onClick={() => handleQualityFilter("")}
           >
             All
@@ -187,13 +189,11 @@ export default function SearchPage(): JSX.Element {
             <button
               key={b.key}
               type="button"
-              className={[
-                "quality-filter-btn",
+              className={clsx(
+                styles.qualityFilterBtn,
                 `quality-bucket-${b.key}`,
-                qualityBucket === b.key ? "active" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
+                qualityBucket === b.key && styles.active
+              )}
               onClick={() => handleQualityFilter(qualityBucket === b.key ? "" : b.key)}
             >
               {b.label}
@@ -201,7 +201,7 @@ export default function SearchPage(): JSX.Element {
           ))}
         </div>
 
-        <div className="toolbar-info">
+        <div className={styles.toolbarInfo}>
           {loading
             ? "Loading…"
             : total > 0
@@ -210,9 +210,9 @@ export default function SearchPage(): JSX.Element {
         </div>
       </div>
 
-      {error && <div className="error-msg">Error: {error}</div>}
+      {error && <div className={styles.errorMsg}>Error: {error}</div>}
 
-      <div className="reel-table-container" ref={tableContainerRef}>
+      <div className={styles.reelTableContainer} ref={tableContainerRef}>
         <ReelTable rows={rows} onSelectReel={setSelectedReel} revealed={revealed} />
       </div>
 

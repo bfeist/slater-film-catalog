@@ -1,0 +1,162 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgb(0 0 0 / 70%);
+  animation: fade-in 150ms ease;
+}
+
+.container {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 201;
+  transform: translate(-50%, -50%);
+  background: var(--color-bg-elevated);
+  border-radius: var(--radius-lg);
+  width: min(calc(100% - 2rem), 1100px);
+  height: min(calc(100vh - 2rem), 900px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-overlay);
+  animation: slide-up 200ms ease;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--color-border-default);
+  flex-shrink: 0;
+}
+
+.title {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--color-text-primary);
+}
+
+.closeBtn {
+  background: transparent;
+  border: 1px solid var(--color-border-default);
+  color: var(--color-text-secondary);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.2em 0.5em;
+  border-radius: var(--radius-sm);
+}
+
+.closeBtn:hover {
+  background: var(--color-btn-hover-bg);
+  color: var(--color-text-primary);
+}
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--color-border-default);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.tab {
+  padding: 0.4em 0.8em;
+  background: var(--color-bg-surface);
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 0.85em;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.tab:hover {
+  background: var(--color-btn-hover-bg);
+  color: var(--color-text-primary);
+}
+
+.tabActive {
+  background: var(--color-bg-elevated);
+  border-bottom-color: var(--color-accent);
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1rem 0;
+}
+
+.document {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.pageTabs {
+  border-top: 2px solid var(--color-border-default);
+  border-bottom: none;
+  background: var(--color-bg-overlay);
+}
+
+.pageTabs .tab {
+  background: var(--color-bg-overlay);
+  font-size: 0.8em;
+  min-width: 2em;
+  text-align: center;
+  padding: 0.4em 0.6em;
+}
+
+.pageTabs .tab:hover {
+  background: var(--color-btn-hover-bg);
+}
+
+.pageTabs .tabActive {
+  background: var(--color-accent-emphasis);
+  color: var(--color-text-on-emphasis);
+  border-bottom-color: transparent;
+  font-weight: 700;
+}
+
+.pageLabel {
+  padding: 0.4em 0.7em;
+  font-size: 0.75em;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  align-self: center;
+  white-space: nowrap;
+  border-right: 1px solid var(--color-border-default);
+  margin-right: 2px;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 16px));
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}

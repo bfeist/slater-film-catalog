@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import type { DiscoveryShotlist } from "../types";
+import styles from "./DiscoveryEntries.module.css";
 
 interface DiscoveryEntriesProps {
   entries: DiscoveryShotlist[];
@@ -13,11 +14,11 @@ export default function DiscoveryEntries({
   if (entries.length === 0) return null;
 
   return (
-    <div className="discovery-entries">
+    <div className={styles.discoveryEntries}>
       <h3>Discovery Shot List Entries ({entries.length})</h3>
       {entries.map((e) => (
-        <div key={e.rowid} className="discovery-entry">
-          <dl className="file-info-dl">
+        <div key={e.rowid} className={styles.entry}>
+          <dl className={styles.dl}>
             <dt>Tape #</dt>
             <dd>{e.tape_number}</dd>
 
@@ -30,7 +31,7 @@ export default function DiscoveryEntries({
           {e.shotlist_raw && (
             <details open>
               <summary>Raw shot list text</summary>
-              <pre className="shotlist-raw">{e.shotlist_raw}</pre>
+              <pre className={styles.shotlistRaw}>{e.shotlist_raw}</pre>
             </details>
           )}
         </div>

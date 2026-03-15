@@ -1,8 +1,10 @@
 import type { JSX } from "react";
 import prettyBytes from "pretty-bytes";
+import clsx from "clsx";
 import type { FileMatch, FfprobeMetadata } from "../types";
 import { formatDuration, formatFrameRate, formatResolution } from "../utils/format";
 import { computeQualityLabel, getBucketKey } from "../utils/qualityBuckets";
+import styles from "./FileInfoCard.module.css";
 
 interface FileInfoCardProps {
   file: FileMatch;
@@ -22,20 +24,20 @@ export default function FileInfoCard({
   const fullPath = `${file.folder_root}/${file.rel_path}`;
 
   return (
-    <div className="file-info-card">
-      <div className="file-info-header">
+    <div className={styles.card}>
+      <div className={styles.cardHeader}>
         <strong>{displayFilename ?? file.filename}</strong>
         <span className="muted">
           {file.size_bytes == null ? "—" : prettyBytes(file.size_bytes)}
         </span>
         {onPlay && (
-          <button className="play-btn" onClick={() => onPlay(file.file_id)}>
+          <button className={styles.playBtn} onClick={() => onPlay(file.file_id)}>
             ▶ Play
           </button>
         )}
       </div>
 
-      <dl className="file-info-dl">
+      <dl className={styles.dl}>
         {showPath && (
           <>
             <dt>Path</dt>
@@ -57,8 +59,8 @@ export default function FileInfoCard({
       </dl>
 
       {probe && !probe.probe_error && (
-        <div className="probe-section">
-          <div className="probe-section-title">File Quality Details</div>
+        <div className={styles.probeSection}>
+          <div className={styles.probeSectionTitle}>File Quality Details</div>
           {probe.video_codec &&
             (() => {
               const label = computeQualityLabel(
@@ -69,14 +71,17 @@ export default function FileInfoCard({
               const bucketKey = getBucketKey(probe.video_codec, probe.video_width);
               return (
                 <div
-                  className={`quality-badge quality-badge-block${bucketKey ? ` quality-bucket-${bucketKey}` : ""}`}
+                  className={clsx(
+                    styles.qualityBadgeBlock,
+                    bucketKey && `quality-bucket-${bucketKey}`
+                  )}
                   title={`${probe.video_codec} ${probe.video_width ?? "?"}\xd7${probe.video_height ?? "?"}`}
                 >
                   {label}
                 </div>
               );
             })()}
-          <dl className="file-info-dl">
+          <dl className={styles.dl}>
             <dt>Format</dt>
             <dd>{probe.format_long_name || probe.format_name || "—"}</dd>
 
@@ -131,7 +136,7 @@ export default function FileInfoCard({
       )}
 
       {probe?.probe_error && (
-        <div className="probe-error">
+        <div className={styles.probeError}>
           <strong>Probe error:</strong> {probe.probe_error}
         </div>
       )}
