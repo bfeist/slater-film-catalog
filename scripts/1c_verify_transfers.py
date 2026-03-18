@@ -55,7 +55,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from db_resolve import ResolvedMatch, resolve
 from filename_parser import parse_filename
 
-DB_PATH = "database/catalog.db"
+DB_PATH = "../database/catalog.db"
 
 # Folders to scan — /o/ is READ-ONLY, we only list files.
 # (path, recursive, is_master_quality)

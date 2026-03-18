@@ -190,12 +190,28 @@ def _build_candidates(raw: str) -> list[str]:
     "ak-023"           → ["AK-023", "AK-23"]
     "se-69-300"        → ["SE-69-300", "SE-69"]
     "del-517"          → ["DEL-517"]
+    "CL-1438"          → ["CL-1438", "CL-01438"]
+    "CL1438"           → ["CL-1438", "CL-01438"]
     """
     raw = raw.strip().upper()
-    if not raw or "-" not in raw:
+    if not raw:
         return []
 
-    parts = raw.split("-")
+    # Normalize: insert hyphen between letters and digits if not present.
+    # This handles both "CL-1438" and "CL1438" identifiers.
+    normalized = ""
+    for i, char in enumerate(raw):
+        normalized += char
+        if i < len(raw) - 1:
+            next_is_digit = raw[i + 1].isdigit()
+            # Insert hyphen at letter-to-digit transition if not already there.
+            if char.isalpha() and next_is_digit and normalized[-1] != "-":
+                normalized += "-"
+
+    if "-" not in normalized:
+        return []
+
+    parts = normalized.split("-")
     if len(parts) < 2:
         return []
 
