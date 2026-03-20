@@ -3,7 +3,10 @@
 // ---------------------------------------------------------------------------
 
 import { Router } from "express";
+import fs from "node:fs";
+import path from "node:path";
 import { getDb } from "../db.js";
+import { config } from "../config.js";
 import { toSlater, resolveIdentifier, isRevealed } from "../slater.js";
 import { QUALITY_BUCKETS } from "../../utils/qualityBuckets.js";
 
@@ -374,6 +377,75 @@ router.get("/", (req, res) => {
   });
 
   res.json({ total, page, limit, rows: mapped, revealed: reveal, search: q ? "like" : "none" });
+});
+
+// Regex ported from scripts/title_gen/generate_alt_titles.py (_REEL_ID_RE).
+// Matches parenthesised annotations first, then bare reel identifiers.
+const REEL_ID_RE =
+  /\(\s*(?:FR-[A-G]?\d+(?:-\d+)?|AK-\d+|BRF\d+[A-Z]?)(?:\s+[A-Z0-9][A-Z0-9\s./]*?)?\s*\)|FR-[A-G]?\d+(?:-\d+)?|AK-\d+|BRF\d+[A-Z]?/gi;
+
+function redactShotlistText(text: string, pdfStems: string[]): string {
+  // 1. Strip standard reel-identifier patterns (FR-XXXX, AK-NNN, BRFnnnX)
+  let out = text.replace(REEL_ID_RE, "[redacted]");
+
+  // 2. Strip the specific PDF stem names verbatim (covers non-standard identifiers
+  //    like 255-PV-10 that aren't captured by REEL_ID_RE)
+  for (const stem of pdfStems) {
+    if (stem.length < 3) continue; // skip trivially short strings
+    const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(escaped, "gi"), "[redacted]");
+  }
+
+  return out;
+}
+
+// ---- GET /api/reels/:identifier/shotlist-text ----
+// Serves LLM OCR text for guest users (and revealed users too).
+router.get("/:identifier/shotlist-text", (req, res) => {
+  const d = getDb();
+  const rawParam = req.params.identifier;
+  const identifier = resolveIdentifier(rawParam) ?? rawParam;
+  const row = d
+    .prepare("SELECT shotlist_pdfs FROM film_rolls WHERE identifier = ?")
+    .get(identifier) as { shotlist_pdfs: string | null } | undefined;
+  if (!row) {
+    res.status(404).json({ error: "Reel not found" });
+    return;
+  }
+  const pdfs: string[] = row.shotlist_pdfs ? JSON.parse(row.shotlist_pdfs) : [];
+  if (pdfs.length === 0) {
+    res.json({ identifier: rawParam, text: null });
+    return;
+  }
+
+  // Collect OCR text from all matching JSON files
+  const pdfStems: string[] = [];
+  const texts: string[] = [];
+  for (const pdfName of pdfs) {
+    const stem = pdfName.replace(/\.pdf$/i, "");
+    pdfStems.push(stem);
+    const jsonPath = path.join(config.llmOcrDir, `${stem}.json`);
+    if (!fs.existsSync(jsonPath)) continue;
+    try {
+      const data = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+      if (typeof data.llm_text === "string" && data.llm_text.trim()) {
+        texts.push(data.llm_text);
+      }
+    } catch {
+      /* skip malformed JSON */
+    }
+  }
+
+  const combined = texts.join("\n\n") || null;
+
+  const reveal = isRevealed(req);
+  const displayId = reveal ? identifier : toSlater(identifier);
+  let outText = combined;
+  if (!reveal && combined) {
+    outText = redactShotlistText(combined, pdfStems);
+  }
+
+  res.json({ identifier: displayId, text: outText });
 });
 
 // ---- GET /api/reels/:identifier/shotlist-pdfs ----

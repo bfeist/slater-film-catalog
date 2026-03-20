@@ -10,6 +10,7 @@ import FileInfoCard from "./FileInfoCard";
 import DiscoveryEntries from "./DiscoveryEntries";
 import VideoPlayer from "./VideoPlayer";
 import ShotlistPdfViewer from "./ShotlistPdfViewer";
+import ShotlistTextViewer from "./ShotlistTextViewer";
 import styles from "./ReelDetailContent.module.css";
 
 interface ReelDetailContentProps {
@@ -22,7 +23,8 @@ export default function ReelDetailContent({ data }: ReelDetailContentProps): JSX
     name: string;
     duration: number | null;
   } | null>(null);
-  const [showShotlist, setShowShotlist] = useState(false);
+  const [showShotlistPdf, setShowShotlistPdf] = useState(false);
+  const [showShotlistText, setShowShotlistText] = useState(false);
 
   const {
     reel,
@@ -116,8 +118,16 @@ export default function ReelDetailContent({ data }: ReelDetailContentProps): JSX
             {reel.has_shotlist_pdf ? (
               <>
                 Yes{" "}
-                <button className={styles.shotlistPdfBtn} onClick={() => setShowShotlist(true)}>
-                  View PDF
+                {revealed && (
+                  <button
+                    className={styles.shotlistPdfBtn}
+                    onClick={() => setShowShotlistPdf(true)}
+                  >
+                    View PDF
+                  </button>
+                )}{" "}
+                <button className={styles.shotlistPdfBtn} onClick={() => setShowShotlistText(true)}>
+                  View Shot List
                 </button>
               </>
             ) : (
@@ -240,12 +250,20 @@ export default function ReelDetailContent({ data }: ReelDetailContentProps): JSX
         />
       )}
 
-      {/* ---- Shotlist PDF viewer overlay ---- */}
-      {showShotlist && reel.shotlist_pdfs && (
+      {/* ---- Shotlist PDF viewer overlay (revealed users) ---- */}
+      {showShotlistPdf && revealed && reel.shotlist_pdfs && (
         <ShotlistPdfViewer
           identifier={reel.identifier}
           pdfs={JSON.parse(reel.shotlist_pdfs) as string[]}
-          onClose={() => setShowShotlist(false)}
+          onClose={() => setShowShotlistPdf(false)}
+        />
+      )}
+
+      {/* ---- Shotlist text viewer overlay ---- */}
+      {showShotlistText && (
+        <ShotlistTextViewer
+          identifier={reel.identifier}
+          onClose={() => setShowShotlistText(false)}
         />
       )}
     </>

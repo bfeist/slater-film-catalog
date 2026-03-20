@@ -35,8 +35,6 @@ uv run python scripts/shotlist/1c_llm_ocr.py
 uv run python scripts/shotlist/1d_build_fts_index.py
 ```
 
-Note: `tsc:server` has a pre-existing out-of-rootDir import error — known, not our fault. All other steps must pass clean.
-
 ## Project Layout
 
 ```

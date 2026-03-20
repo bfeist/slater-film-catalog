@@ -31,7 +31,7 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[2]
 PDF_DIR = ROOT / "static_assets" / "shotlist_pdfs"
 MARKER_DIR = ROOT / "data" / "01_shotlist_raw"
-OLD_LLM_DIR = ROOT / "data" / "01c_llm_ocr"
+OLD_LLM_DIR = ROOT / "static_assets" / "llm_ocr"
 OUT_DIR = ROOT / "data" / "01c_prompt_test"
 
 OLLAMA_URL = "http://localhost:11434/api/generate"

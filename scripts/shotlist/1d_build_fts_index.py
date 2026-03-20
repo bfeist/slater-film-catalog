@@ -37,7 +37,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SHOTLIST_RAW_DIR = ROOT / "data" / "01_shotlist_raw"
-LLM_OCR_DIR = ROOT / "data" / "01c_llm_ocr"
+LLM_OCR_DIR = ROOT / "static_assets" / "llm_ocr"
 DB_PATH = ROOT / "database" / "catalog.db"
 
 

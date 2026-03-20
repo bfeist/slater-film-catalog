@@ -57,7 +57,7 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parents[2]
 PDF_DIR = ROOT / "static_assets" / "shotlist_pdfs"
-LLM_OUT_DIR = ROOT / "data" / "01c_llm_ocr"
+LLM_OUT_DIR = ROOT / "static_assets" / "llm_ocr"
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL = "qwen3.5:9b"

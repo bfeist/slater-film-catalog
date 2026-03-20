@@ -93,6 +93,9 @@ export const config = {
   /** Directory containing the scanned shotlist PDFs */
   shotlistPdfDir: process.env.SHOTLIST_PDF_DIR ?? fromRoot("static_assets", "shotlist_pdfs"),
 
+  /** Directory containing LLM OCR JSON outputs (one per PDF) */
+  llmOcrDir: process.env.LLM_OCR_DIR ?? fromRoot("static_assets", "llm_ocr"),
+
   /** Root of the NASA video archive share */
   videoArchiveRoot: process.env.VIDEO_ARCHIVE_ROOT ?? defaultArchiveRoot(),
 

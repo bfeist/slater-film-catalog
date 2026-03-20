@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MARKER_DIR = ROOT / "data" / "01_shotlist_raw"
-LLM_DIR = ROOT / "data" / "01c_llm_ocr"
+LLM_DIR = ROOT / "static_assets" / "llm_ocr"
 
 
 def alpha_count(text: str) -> int:

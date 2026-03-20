@@ -7,6 +7,7 @@ import type {
   ReelSearchResponse,
   ReelDetailResponse,
   ShotlistPdfsResponse,
+  ShotlistTextResponse,
 } from "../types";
 
 const BASE = "/api";
@@ -59,6 +60,10 @@ export function fetchReelDetail(identifier: string): Promise<ReelDetailResponse>
 
 export function fetchShotlistPdfs(identifier: string): Promise<ShotlistPdfsResponse> {
   return get<ShotlistPdfsResponse>(`/reels/${encodeURIComponent(identifier)}/shotlist-pdfs`);
+}
+
+export function fetchShotlistText(identifier: string): Promise<ShotlistTextResponse> {
+  return get<ShotlistTextResponse>(`/reels/${encodeURIComponent(identifier)}/shotlist-text`);
 }
 
 /** Get the URL for serving a shotlist PDF */

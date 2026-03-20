@@ -32,8 +32,6 @@ A read-only catalog of NASA 16mm/35mm archival film reels. Users browse, search,
 npm run test:all
 ```
 
-This runs: lint → tsc (client) → tsc (server) → build → vitest. The `tsc:server` step has a pre-existing error (out-of-rootDir import) — it is **known and not our fault**; all other steps must pass clean.
-
 ## Env / Infrastructure
 
 - Dev server: Vite on `:9300`, API on `:9301` (proxied via `/api/*`)

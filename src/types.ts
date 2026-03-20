@@ -186,3 +186,8 @@ export interface ShotlistPdfsResponse {
   identifier: string;
   pdfs: string[];
 }
+
+export interface ShotlistTextResponse {
+  identifier: string;
+  text: string | null;
+}
