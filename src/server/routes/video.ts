@@ -256,7 +256,7 @@ router.get("/:file_id/stream", (req, res) => {
 
   const codec = probe?.video_codec ?? "unknown";
   console.log(
-    `[video-stream] Transcoding ${fullPath} (${codec}) → mp4/h264 + watermark, start=${startSecs}s${isNaraProxy ? ` (NARA proxy: physical seek=${effectiveStartSecs}s)` : ""}, streamId=${streamId || "(none)"}`
+    `[${new Date().toISOString()}] [video-stream] Transcoding ${fullPath} (${codec}) → mp4/h264 + watermark, start=${startSecs}s${isNaraProxy ? ` (NARA proxy: physical seek=${effectiveStartSecs}s)` : ""}, streamId=${streamId || "(none)"}`
   );
 
   res.writeHead(200, {
