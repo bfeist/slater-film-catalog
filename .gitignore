@@ -30,6 +30,9 @@ uv.lock
 # Environment — local overrides (see .env.example for template)
 .env
 
+# Auth config (contains password hashes — never commit)
+auth.config.json
+
 # IDE
 .vscode/
 .idea/

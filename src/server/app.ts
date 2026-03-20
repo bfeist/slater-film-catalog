@@ -12,6 +12,7 @@ import statsRouter from "./routes/stats.js";
 import reelsRouter from "./routes/reels.js";
 import videoRouter from "./routes/video.js";
 import shotlistPdfRouter from "./routes/shotlistPdf.js";
+import authRouter from "./routes/auth.js";
 import { initSlaterMap } from "./slater.js";
 
 export function createApp(): express.Application {
@@ -20,9 +21,13 @@ export function createApp(): express.Application {
   // Build the identifier ↔ slater-number lookup table
   initSlaterMap();
 
+  // JSON body parsing for auth endpoints
+  app.use(express.json());
+
   // ---------------------------------------------------------------------------
   // API routes
   // ---------------------------------------------------------------------------
+  app.use("/api/auth", authRouter);
   app.use("/api/stats", statsRouter);
   app.use("/api/reels", reelsRouter);
   app.use("/api/video", videoRouter);

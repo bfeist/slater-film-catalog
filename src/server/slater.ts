@@ -14,6 +14,7 @@ import crypto from "node:crypto";
 import type { Request } from "express";
 import { getDb } from "./db.js";
 import { config } from "./config.js";
+import { getSession } from "./auth.js";
 
 // ---- Bidirectional maps (populated at startup) ----------------------------
 
@@ -92,11 +93,23 @@ export function resolveIdentifier(slaterOrIdent: string): string | null {
 }
 
 /**
- * Does the current request carry a valid reveal key?
- * Checked via `X-Reveal-Key` header or `?reveal=` query param.
+ * Does the current request carry a valid session with "full" role?
+ * Checks the Authorization: Bearer <token> header, falling back to the
+ * legacy X-Reveal-Key / ?reveal= query param for backwards compatibility.
  */
 export function isRevealed(req: Request): boolean {
-  if (!config.revealSecret) return true; // no secret configured → always reveal
+  // New session-based auth: check Authorization header
+  const authHeader = req.headers.authorization;
+  if (authHeader) {
+    const m = authHeader.match(/^Bearer\s+(\S+)$/i);
+    if (m) {
+      const session = getSession(m[1]);
+      if (session) return session.role === "full";
+    }
+  }
+
+  // Legacy: X-Reveal-Key header or ?reveal= query param
+  if (!config.revealSecret) return true;
   const key =
     (req.headers["x-reveal-key"] as string | undefined) ?? (req.query.reveal as string | undefined);
   return !!key && key === config.revealSecret;

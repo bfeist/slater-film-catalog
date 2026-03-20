@@ -14,6 +14,16 @@ import { isRevealed } from "../slater.js";
 const router = Router();
 
 // ---------------------------------------------------------------------------
+// NARA proxy leader — the first 10 seconds of every NARA proxy is a leader
+// (slate/countdown) that should be hidden from viewers.  Any file whose path
+// sits under NARA_PROXY_ROOT is automatically seeked past the leader so that
+// logical second 0 corresponds to physical second 10 in the file.
+// ---------------------------------------------------------------------------
+
+const NARA_PROXY_ROOT = path.normalize("O:\\MPEG-Proxies\\NARA").toLowerCase();
+const NARA_LEADER_SECS = 10;
+
+// ---------------------------------------------------------------------------
 // Timecode helpers — used for watermark burn-in when the source has a TC track
 // ---------------------------------------------------------------------------
 
@@ -234,9 +244,19 @@ router.get("/:file_id/stream", (req, res) => {
   const startSecs = parseFloat((req.query.start as string) ?? "0") || 0;
   const streamId = (req.query.streamId as string | undefined) ?? "";
 
+  // For NARA proxy files the first NARA_LEADER_SECS seconds are a hidden
+  // leader. The effective seek position is offset by that amount so that
+  // logical time 0 (what the client calls "start=0") maps to physical second
+  // NARA_LEADER_SECS inside the file.  frameOffset — which drives the
+  // watermark timecode — is intentionally based on startSecs (not
+  // effectiveStartSecs) so the overlay always shows logical time starting
+  // from 00:00:00:00.
+  const isNaraProxy = path.normalize(fullPath).toLowerCase().startsWith(NARA_PROXY_ROOT);
+  const effectiveStartSecs = isNaraProxy ? startSecs + NARA_LEADER_SECS : startSecs;
+
   const codec = probe?.video_codec ?? "unknown";
   console.log(
-    `[video-stream] Transcoding ${fullPath} (${codec}) → mp4/h264 + watermark, start=${startSecs}s, streamId=${streamId || "(none)"}`
+    `[video-stream] Transcoding ${fullPath} (${codec}) → mp4/h264 + watermark, start=${startSecs}s${isNaraProxy ? ` (NARA proxy: physical seek=${effectiveStartSecs}s)` : ""}, streamId=${streamId || "(none)"}`
   );
 
   res.writeHead(200, {
@@ -309,8 +329,8 @@ router.get("/:file_id/stream", (req, res) => {
     ":y=(h-text_h)/1.5";
 
   const ffmpegArgs: string[] = ["-copyts"];
-  if (startSecs > 0) {
-    ffmpegArgs.push("-ss", String(startSecs));
+  if (effectiveStartSecs > 0) {
+    ffmpegArgs.push("-ss", String(effectiveStartSecs));
   }
   ffmpegArgs.push("-i", fullPath);
 

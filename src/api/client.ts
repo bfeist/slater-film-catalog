@@ -11,11 +11,11 @@ import type {
 
 const BASE = "/api";
 
-/** Return reveal-key header if one is stored in sessionStorage. */
-function revealHeaders(): Record<string, string> {
+/** Return auth header if a session token is stored. */
+function authHeaders(): Record<string, string> {
   try {
-    const key = globalThis.sessionStorage?.getItem("revealKey");
-    if (key) return { "X-Reveal-Key": key };
+    const token = globalThis.sessionStorage?.getItem("authToken");
+    if (token) return { Authorization: `Bearer ${token}` };
   } catch {
     /* SSR / non-browser — ignore */
   }
@@ -23,7 +23,7 @@ function revealHeaders(): Record<string, string> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { headers: revealHeaders() });
+  const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`API ${res.status}: ${body}`);

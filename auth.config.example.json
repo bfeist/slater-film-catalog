@@ -1,0 +1,19 @@
+{
+  "users": [
+    {
+      "username": "admin",
+      "password": "jerich0",
+      "role": "full"
+    },
+    {
+      "username": "slater",
+      "password": "show-me-the-money",
+      "role": "full"
+    },
+    {
+      "username": "viewer",
+      "password": "your-password-here",
+      "role": "guest"
+    }
+  ]
+}

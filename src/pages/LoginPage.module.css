@@ -1,57 +1,38 @@
-.overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
-  background: rgb(0 0 0 / 60%);
-  animation: fade-in 150ms ease;
+.loginPage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: var(--color-bg-default);
+  padding: 1rem;
 }
 
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes slide-up {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -48%);
-  }
-
-  to {
-    opacity: 1;
-    transform: translate(-50%, -50%);
-  }
-}
-
-.content {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  z-index: 201;
-  transform: translate(-50%, -50%);
+.card {
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
   width: calc(100% - 2rem);
   max-width: 380px;
-  box-shadow: var(--shadow-overlay);
-  animation: slide-up 200ms ease;
-  padding: 1.5rem;
+  padding: 2rem 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.25rem;
 }
 
-.title {
-  font-size: 1.1rem;
+.heading {
+  font-size: 1.25rem;
   font-weight: 700;
   color: var(--color-text-primary);
   margin: 0;
+  text-align: center;
+}
+
+.subtitle {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  text-align: center;
+  margin: -0.5rem 0 0;
 }
 
 .form {
@@ -83,40 +64,16 @@
   border-color: var(--color-link);
 }
 
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.25rem;
-}
-
-.cancelBtn {
-  background: transparent;
-  border: 1px solid var(--color-border-default);
-  color: var(--color-text-secondary);
-  padding: 0.4em 0.9em;
-  border-radius: var(--radius-sm);
-  font-size: 0.875rem;
-  cursor: pointer;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.cancelBtn:hover {
-  background: var(--color-btn-hover-bg);
-  color: var(--color-text-primary);
-}
-
 .submitBtn {
   background: var(--color-link);
   border: 1px solid transparent;
   color: #ffffff;
-  padding: 0.4em 0.9em;
+  padding: 0.5em 1em;
   border-radius: var(--radius-sm);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   cursor: pointer;
   transition: opacity var(--transition-fast);
+  margin-top: 0.25rem;
 }
 
 .submitBtn:disabled {
@@ -126,4 +83,10 @@
 
 .submitBtn:not(:disabled):hover {
   opacity: 0.85;
+}
+
+.errorMsg {
+  color: var(--color-danger, #ee5555);
+  font-size: 0.85rem;
+  text-align: center;
 }
