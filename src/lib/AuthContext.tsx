@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
 
 export type UserRole = "full" | "guest";
 
@@ -87,6 +87,22 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
     setRole(null);
     setAuthVersion((v) => v + 1);
   }, []);
+
+  // On mount, verify the stored token is still valid with the server.
+  // If the server returns 401 (e.g. after a secret rotation or restart),
+  // silently log out so the UI reflects reality instead of showing a
+  // broken "logged in" state.
+  useEffect(() => {
+    const token = getStoredToken();
+    if (!token) return;
+    fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => {
+        if (r.status === 401) logout();
+      })
+      .catch(() => {
+        // Network error — don't log out, the server may just be starting up
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <AuthContext value={{ isAuthenticated, authVersion, username, role, login, logout }}>

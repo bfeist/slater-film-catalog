@@ -1,4 +1,5 @@
 {
+  "secret": "generate-with-node-crypto-randomBytes-48-hex-or-leave-blank-to-auto-generate",
   "users": [
     {
       "username": "admin",
