@@ -4,6 +4,8 @@
 
 import { Router } from "express";
 import { authenticate, getSession, destroySession } from "../auth.js";
+import { logActivity } from "../logger.js";
+import { ConsoleLogger } from "../logger.js";
 
 const router = Router();
 
@@ -33,10 +35,13 @@ router.post("/login", async (req, res) => {
 
   const result = authenticate(username, password);
   if (!result) {
+    ConsoleLogger.warn(`[auth] Failed login attempt for user: ${username}`);
+    logActivity({ action: "auth_login", username: username.trim(), details: "failed" });
     res.status(401).json({ error: "Invalid username or password" });
     return;
   }
 
+  logActivity({ action: "auth_login", username: result.username, details: `role=${result.role}` });
   res.json({ token: result.token, username: result.username, role: result.role });
 });
 
@@ -44,6 +49,10 @@ router.post("/login", async (req, res) => {
 router.post("/logout", (req, res) => {
   const token = extractToken(req.headers.authorization);
   if (token) {
+    const session = getSession(token);
+    if (session) {
+      logActivity({ action: "auth_logout", username: session.username });
+    }
     destroySession(token);
   }
   res.json({ ok: true });

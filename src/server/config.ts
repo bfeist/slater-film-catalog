@@ -135,6 +135,9 @@ export const config = {
    */
   serveFrontend: process.env.SERVE_FRONTEND !== "false",
 
+  /** Directory for activity log files */
+  logDir: process.env.LOG_DIR ?? fromRoot(".local", "logs"),
+
   /** HMAC key used to derive Slater numbers from identifiers */
   slaterSecret: process.env.SLATER_SECRET ?? "slater-film-default-hmac-key",
 } as const;

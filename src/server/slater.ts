@@ -94,14 +94,30 @@ export function resolveIdentifier(slaterOrIdent: string): string | null {
 
 /**
  * Does the current request carry a valid session with "full" role?
- * Checks the Authorization: Bearer <token> header, falling back to the
  * Returns true when the request carries a valid Bearer session token with role="full".
  */
 export function isRevealed(req: Request): boolean {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) return false;
-  const m = authHeader.match(/^Bearer\s+(\S+)$/i);
-  if (!m) return false;
-  const session = getSession(m[1]);
+  const session = getRequestSession(req);
   return !!session && session.role === "full";
+}
+
+/** Extract the session from a request's Bearer token or ?token= query param, or null if absent/invalid. */
+function getRequestSession(req: Request) {
+  const authHeader = req.headers.authorization;
+  if (authHeader) {
+    const m = authHeader.match(/^Bearer\s+(\S+)$/i);
+    if (m) return getSession(m[1]);
+  }
+  // Fallback: video stream URLs carry the token as a query param because
+  // <video src="..."> cannot send custom headers.
+  const queryToken = req.query?.token;
+  if (typeof queryToken === "string" && queryToken) return getSession(queryToken);
+  return null;
+}
+
+/**
+ * Return the authenticated username for the request, or "guest" if unauthenticated.
+ */
+export function getRequestUser(req: Request): string {
+  return getRequestSession(req)?.username ?? "guest";
 }

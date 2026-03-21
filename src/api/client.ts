@@ -76,15 +76,28 @@ export function videoStreamUrl(fileId: number, streamId: string, startSecs?: num
   const base = `${BASE}/video/${fileId}/stream`;
   const params = new URLSearchParams({ streamId });
   if (startSecs && startSecs > 0) params.set("start", startSecs.toFixed(1));
+  // <video src> cannot send custom headers, so embed the token as a query param
+  // for the server to fall back on when the Authorization header is absent.
+  try {
+    const token = globalThis.sessionStorage?.getItem("authToken");
+    if (token) params.set("token", token);
+  } catch {
+    /* SSR / non-browser */
+  }
   return `${base}?${params.toString()}`;
 }
 
 /** Heartbeat — call every few seconds while a stream is active */
 export async function videoHeartbeat(streamId: string): Promise<void> {
-  await fetch(`${BASE}/video/heartbeat?streamId=${encodeURIComponent(streamId)}`);
+  await fetch(`${BASE}/video/heartbeat?streamId=${encodeURIComponent(streamId)}`, {
+    headers: authHeaders(),
+  });
 }
 
 /** Explicit stop — call when the player unmounts or seeks away from a stream */
 export async function videoStop(streamId: string): Promise<void> {
-  await fetch(`${BASE}/video/stop?streamId=${encodeURIComponent(streamId)}`, { method: "POST" });
+  await fetch(`${BASE}/video/stop?streamId=${encodeURIComponent(streamId)}`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
 }

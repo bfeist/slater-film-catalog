@@ -6,6 +6,8 @@ import { Router } from "express";
 import path from "node:path";
 import fs from "node:fs";
 import { config } from "../config.js";
+import { logActivity } from "../logger.js";
+import { getRequestUser } from "../slater.js";
 
 const router = Router();
 
@@ -30,6 +32,11 @@ router.get("/:filename", (req, res) => {
   }
 
   const stat = fs.statSync(pdfPath);
+  logActivity({
+    action: "generate_shotlist_pdf",
+    username: getRequestUser(req),
+    details: `file=${filename}`,
+  });
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Length", stat.size);
   // Serve inline with no filename exposed — prevents the browser or HTTP layer

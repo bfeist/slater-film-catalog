@@ -7,8 +7,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { getDb } from "../db.js";
 import { config } from "../config.js";
-import { toSlater, resolveIdentifier, isRevealed } from "../slater.js";
+import { toSlater, resolveIdentifier, isRevealed, getRequestUser } from "../slater.js";
 import { QUALITY_BUCKETS } from "../../utils/qualityBuckets.js";
+import { logActivity } from "../logger.js";
 
 const router = Router();
 
@@ -127,6 +128,14 @@ router.get("/", (req, res) => {
   const hasTransfer = req.query.has_transfer as string | undefined;
   const qualityBucket = req.query.quality_bucket as string | undefined;
   const reveal = isRevealed(req);
+
+  if (q) {
+    logActivity({
+      action: "search",
+      username: getRequestUser(req),
+      details: q,
+    });
+  }
 
   // For guests, precompute which reels have at least one file that is NOT
   // shared across multiple reels (e.g. L00x proxy files on an LTO tape).
@@ -475,6 +484,8 @@ router.get("/:identifier", (req, res) => {
     res.status(404).json({ error: "Reel not found" });
     return;
   }
+
+  logActivity({ action: "view_reel", identifier, username: getRequestUser(req) });
 
   const reveal = isRevealed(req);
 

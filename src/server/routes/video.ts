@@ -9,7 +9,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { getDb } from "../db.js";
 import { config } from "../config.js";
 import { redactFileOnDiskEntry } from "../redaction.js";
-import { isRevealed } from "../slater.js";
+import { isRevealed, getRequestUser } from "../slater.js";
+import { ConsoleLogger, logActivity } from "../logger.js";
 
 const router = Router();
 
@@ -172,6 +173,8 @@ const HEARTBEAT_TIMEOUT_MS = 15_000; // kill if silent for 15 s
 interface ActiveStream {
   ffmpeg: ChildProcess;
   watchdog: ReturnType<typeof setTimeout>;
+  identifier: string;
+  username: string;
 }
 
 const activeStreams = new Map<string, ActiveStream>();
@@ -181,7 +184,13 @@ function deregisterStream(streamId: string, reason: string): void {
   if (!s) return;
   clearTimeout(s.watchdog);
   activeStreams.delete(streamId);
-  console.log(`[video-stream] Killing stream ${streamId}: ${reason}`);
+  ConsoleLogger.info(`[video-stream] Killing stream ${streamId}: ${reason}`);
+  logActivity({
+    action: "stop_video",
+    identifier: s.identifier,
+    username: s.username,
+    details: `reason=${reason}`,
+  });
   try {
     s.ffmpeg.kill("SIGTERM");
   } catch {
@@ -252,7 +261,7 @@ router.get("/:file_id/stream", (req, res) => {
 
   const fullPath = resolveFilePath(file.folder_root, file.rel_path);
   if (!fs.existsSync(fullPath)) {
-    console.error(
+    ConsoleLogger.error(
       `[video-stream] File not found on disk: ${fullPath} (folder_root=${file.folder_root})`
     );
     res.status(404).send("File not found on disk");
@@ -280,10 +289,23 @@ router.get("/:file_id/stream", (req, res) => {
   const isNaraProxy = path.normalize(fullPath).toLowerCase().startsWith(NARA_PROXY_ROOT);
   const effectiveStartSecs = isNaraProxy ? startSecs + NARA_LEADER_SECS : startSecs;
 
+  // Look up the reel identifier for this file so we can log it
+  const reelRow = d
+    .prepare("SELECT reel_identifier FROM transfer_file_matches WHERE file_id = ? LIMIT 1")
+    .get(fileId) as { reel_identifier: string } | undefined;
+  const reelIdentifier = reelRow?.reel_identifier ?? "unknown";
+
   const codec = probe?.video_codec ?? "unknown";
-  console.log(
-    `[${new Date().toISOString()}] [video-stream] Transcoding ${fullPath} (${codec}) → mp4/${config.videoEncoder} + watermark, start=${startSecs}s${isNaraProxy ? ` (NARA proxy: physical seek=${effectiveStartSecs}s)` : ""}, streamId=${streamId || "(none)"}`
+  ConsoleLogger.info(
+    `[video-stream] Playing ${reelIdentifier} (file=${fileId}, ${codec}) → mp4/${config.videoEncoder}, start=${startSecs}s${isNaraProxy ? ` (NARA proxy: physical seek=${effectiveStartSecs}s)` : ""}`
   );
+
+  logActivity({
+    action: "play_video",
+    identifier: reelIdentifier,
+    username: getRequestUser(req),
+    details: `file_id=${fileId} codec=${codec} start=${startSecs}s`,
+  });
 
   res.writeHead(200, {
     "Content-Type": "video/mp4",
@@ -392,7 +414,12 @@ router.get("/:file_id/stream", (req, res) => {
       () => deregisterStream(streamId, "heartbeat timeout"),
       HEARTBEAT_TIMEOUT_MS
     );
-    activeStreams.set(streamId, { ffmpeg, watchdog });
+    activeStreams.set(streamId, {
+      ffmpeg,
+      watchdog,
+      identifier: reelIdentifier,
+      username: getRequestUser(req),
+    });
   }
 
   const cleanup = (reason: string) => {
@@ -419,11 +446,11 @@ router.get("/:file_id/stream", (req, res) => {
       line.includes("Stream mapping") ||
       line.includes("Output #")
     ) {
-      console.log(`[ffmpeg] ${line.slice(0, 300)}`);
+      ConsoleLogger.debug(`[ffmpeg] ${line.slice(0, 300)}`);
     }
   });
   ffmpeg.on("error", (err: Error) => {
-    console.error("[ffmpeg] spawn error:", err.message);
+    ConsoleLogger.error("[ffmpeg] spawn error:", err.message);
     if (!res.headersSent) {
       res.status(500).send("ffmpeg not available");
     }
@@ -431,7 +458,7 @@ router.get("/:file_id/stream", (req, res) => {
   });
   ffmpeg.on("close", (code) => {
     if (code !== 0) {
-      console.error(`[ffmpeg] process exited with code ${code} for ${fullPath}`);
+      ConsoleLogger.error(`[ffmpeg] process exited with code ${code} for ${fullPath}`);
     }
     res.end();
     if (streamId) {

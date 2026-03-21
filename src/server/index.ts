@@ -5,24 +5,25 @@
 import { createApp } from "./app.js";
 import { config } from "./config.js";
 import { closeDb } from "./db.js";
+import { ConsoleLogger } from "./logger.js";
 
 const app = createApp();
 
 const server = app.listen(config.port, "0.0.0.0", () => {
-  console.log(`\n  Slater Film Catalog API`);
-  console.log(`  Environment:  ${config.env}`);
-  console.log(`  Listening:    http://127.0.0.1:${config.port}`);
-  console.log(`  Database:     ${config.dbPath}`);
-  console.log(`  Archive root: ${config.videoArchiveRoot}`);
+  ConsoleLogger.info(`Slater Film Catalog API`);
+  ConsoleLogger.info(`Environment:  ${config.env}`);
+  ConsoleLogger.info(`Listening:    http://127.0.0.1:${config.port}`);
+  ConsoleLogger.info(`Database:     ${config.dbPath}`);
+  ConsoleLogger.info(`Archive root: ${config.videoArchiveRoot}`);
+  ConsoleLogger.info(`Log dir:      ${config.logDir}`);
   if (config.isProd) {
-    console.log(`  Serving SPA:  ${config.viteDistDir}`);
+    ConsoleLogger.info(`Serving SPA:  ${config.viteDistDir}`);
   }
-  console.log();
 });
 
 // Graceful shutdown
 function shutdown(): void {
-  console.log("\n[server] Shutting down…");
+  ConsoleLogger.info("Shutting down…");
   server.close(() => {
     closeDb();
     process.exit(0);

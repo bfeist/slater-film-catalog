@@ -6,6 +6,7 @@ import express from "express";
 import path from "node:path";
 import fs from "node:fs";
 import { config } from "./config.js";
+import { ConsoleLogger } from "./logger.js";
 
 // Route modules
 import statsRouter from "./routes/stats.js";
@@ -46,8 +47,8 @@ export function createApp(): express.Application {
         res.sendFile(path.join(distDir, "index.html"));
       });
     } else {
-      console.warn(`[server] Warning: Vite dist not found at ${distDir}`);
-      console.warn("[server] Run 'npm run build' first, or set VITE_DIST_DIR.");
+      ConsoleLogger.warn(`Warning: Vite dist not found at ${distDir}`);
+      ConsoleLogger.warn("Run 'npm run build' first, or set VITE_DIST_DIR.");
     }
   }
 

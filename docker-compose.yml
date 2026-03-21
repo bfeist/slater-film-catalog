@@ -47,6 +47,8 @@ services:
       - ./static_assets/llm_ocr:/app/static_assets/llm_ocr:ro
       # Auth credentials (contains passwords — never baked into image)
       - ./auth.config.json:/app/auth.config.json:ro
+      # Activity logs (writable — persisted to host)
+      - ./.local/dockerLogs:/app/logs
       # NASA video archive — Docker CIFS named volume (see top-level volumes: below).
       # Docker mounts this SMB share at daemon startup so it survives host reboots.
       # Credentials and share details come from NAS_* vars in the project .env file.
@@ -65,6 +67,9 @@ services:
       AUTH_CONFIG_PATH: /app/auth.config.json
       # Express should NOT serve the frontend — Nginx handles that
       SERVE_FRONTEND: "false"
+      # Logging
+      LOG_DIR: /app/logs
+      LOG_LEVEL: info
 
     # NVIDIA GPU passthrough — enables hardware-accelerated ffmpeg (NVDEC/NVENC)
     deploy:

@@ -9,6 +9,8 @@ scripts/files_audit/exports/
 # SQLite catalog database
 database/
 
+# Activity logs (.local/ already covers .local/logs and .local/dockerLogs)
+
 # Static assets (large binary files — not tracked in git)
 static_assets/
 
