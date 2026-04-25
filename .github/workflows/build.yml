@@ -94,13 +94,20 @@ jobs:
           rsync -avzO --no-perms --delete -e "ssh -i ~/.ssh/id_deploy" \
             spa-dist/ "$PROD_USER@$PROD_HOST:$PROD_PATH_WEBROOT/"
 
-          # Push compose file and .env.prod to app root
+          # Write .env.prod locally so it rsync's cleanly (avoids SSH pipe encoding issues)
+          printf '%s\n' "$PROD_ENV_FILE" > /tmp/env.prod
+          chmod 600 /tmp/env.prod
+
+          # Push compose file, helper scripts, and .env.prod to app root
           rsync -avzO --no-perms -e "ssh -i ~/.ssh/id_deploy" \
-            compose.prod.yml "$PROD_USER@$PROD_HOST:$PROD_PATH_APPROOT/compose.prod.yml"
+            compose.prod.yml compose_up.sh compose_down.sh \
+            "$PROD_USER@$PROD_HOST:$PROD_PATH_APPROOT/"
+          rsync -avzO --no-perms -e "ssh -i ~/.ssh/id_deploy" \
+            /tmp/env.prod "$PROD_USER@$PROD_HOST:$PROD_PATH_APPROOT/.env.prod"
           ssh -i ~/.ssh/id_deploy "$PROD_USER@$PROD_HOST" \
-            "mkdir -p $PROD_PATH_APPROOT/.local/dockerLogs"
-          echo "$PROD_ENV_FILE" | ssh -i ~/.ssh/id_deploy "$PROD_USER@$PROD_HOST" \
-            "cat > $PROD_PATH_APPROOT/.env.prod && chmod 600 $PROD_PATH_APPROOT/.env.prod"
+            "chmod 600 $PROD_PATH_APPROOT/.env.prod && \
+             chmod 755 $PROD_PATH_APPROOT/compose_up.sh $PROD_PATH_APPROOT/compose_down.sh && \
+             mkdir -p $PROD_PATH_APPROOT/.local/dockerLogs"
 
           # Pull image, restart compose
           ssh -i ~/.ssh/id_deploy "$PROD_USER@$PROD_HOST" bash -se <<EOF

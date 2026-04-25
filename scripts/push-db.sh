@@ -46,6 +46,7 @@ echo "Uploading $DB ($(du -sh "$DB" | cut -f1)) to $PROD_USER@$PROD_HOST:$PROD_P
 $SCP_BIN -i "$SSH_KEY" "$DB" "$PROD_USER@$PROD_HOST:$PROD_PATH_DB/catalog.db.new"
 
 $SSH_BIN -i "$SSH_KEY" "$PROD_USER@$PROD_HOST" \
-  "sqlite3 $PROD_PATH_DB/catalog.db.new 'PRAGMA integrity_check' | grep -q '^ok$' \
+  "python3 -c \"import sqlite3, sys; c=sqlite3.connect('$PROD_PATH_DB/catalog.db.new'); r=c.execute('PRAGMA integrity_check').fetchone()[0]; sys.exit(0 if r=='ok' else 1)\" \
     || { echo 'ERROR: integrity_check failed on uploaded DB — aborting mv' >&2; rm -f $PROD_PATH_DB/catalog.db.new; exit 1; } && \
+   rm -rf $PROD_PATH_DB/catalog.db && \
    mv $PROD_PATH_DB/catalog.db.new $PROD_PATH_DB/catalog.db && echo 'Done.'"
