@@ -25,8 +25,8 @@ services:
       - .env.prod
 
     volumes:
-      # SQLite snapshot — read-only, deployed by Workflow B
-      - ./database/catalog.db:/app/database/catalog.db:ro
+      # SQLite snapshot — read-only, deployed by push-db.sh (lands in ../db/ sibling of app/)
+      - ../db/catalog.db:/app/database/catalog.db:ro
       # Auth credentials (writable so the admin API can manage users)
       - ./auth.config.json:/app/auth.config.json
       # Activity logs

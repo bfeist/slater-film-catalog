@@ -46,4 +46,6 @@ echo "Uploading $DB ($(du -sh "$DB" | cut -f1)) to $PROD_USER@$PROD_HOST:$PROD_P
 $SCP_BIN -i "$SSH_KEY" "$DB" "$PROD_USER@$PROD_HOST:$PROD_PATH_DB/catalog.db.new"
 
 $SSH_BIN -i "$SSH_KEY" "$PROD_USER@$PROD_HOST" \
-  "mv $PROD_PATH_DB/catalog.db.new $PROD_PATH_DB/catalog.db && echo 'Done.'"
+  "sqlite3 $PROD_PATH_DB/catalog.db.new 'PRAGMA integrity_check' | grep -q '^ok$' \
+    || { echo 'ERROR: integrity_check failed on uploaded DB — aborting mv' >&2; rm -f $PROD_PATH_DB/catalog.db.new; exit 1; } && \
+   mv $PROD_PATH_DB/catalog.db.new $PROD_PATH_DB/catalog.db && echo 'Done.'"

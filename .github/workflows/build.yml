@@ -108,8 +108,12 @@ jobs:
             cd "$PROD_PATH_APPROOT"
             echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
             export CATALOG_API_IMAGE="$GHCR_IMAGE:$IMAGE_TAG"
-            docker compose -f compose.prod.yml pull
-            docker compose -f compose.prod.yml up -d
+            # Persist the deployed image tag so manual restarts work:
+            #   docker compose -f compose.prod.yml --env-file .env.prod --env-file .env.deploy restart api
+            echo "CATALOG_API_IMAGE=$GHCR_IMAGE:$IMAGE_TAG" > .env.deploy
+            chmod 600 .env.deploy
+            docker compose -f compose.prod.yml --env-file .env.prod --env-file .env.deploy pull
+            docker compose -f compose.prod.yml --env-file .env.prod --env-file .env.deploy up -d
             sudo systemctl reload nginx || true
             curl -fsS http://127.0.0.1:9311/api/stats | head -c 200
           EOF
