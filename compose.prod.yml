@@ -13,10 +13,7 @@ name: slater-film-catalog-prod
 
 services:
   api:
-    build:
-      context: .
-      dockerfile: docker/api/Dockerfile
-    image: slater-catalog-api:latest
+    image: ${CATALOG_API_IMAGE}
     container_name: slater-catalog-api
     restart: unless-stopped
 

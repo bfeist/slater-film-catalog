@@ -81,20 +81,24 @@ jobs:
           PROD_PATH_WEBROOT: ${{ vars.PROD_PATH_WEBROOT }}
           SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
           IMAGE_TAG: ${{ needs.build.outputs.version }}
+          GHCR_IMAGE: ghcr.io/${{ github.repository }}/catalog-api
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
         run: |
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "$PROD_HOST" >> ~/.ssh/known_hosts
 
           # Push SPA build to host
-          rsync -avz --delete -e "ssh -i ~/.ssh/id_deploy" \
+          rsync -avzO --delete -e "ssh -i ~/.ssh/id_deploy" \
             spa-dist/ "$PROD_USER@$PROD_HOST:$PROD_PATH_WEBROOT/"
 
           # Pull image, restart compose
           ssh -i ~/.ssh/id_deploy "$PROD_USER@$PROD_HOST" bash -se <<EOF
             set -e
             cd "$PROD_PATH_APPROOT"
-            export RELEASE_VERSION="$IMAGE_TAG"
+            echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+            export CATALOG_API_IMAGE="$GHCR_IMAGE:$IMAGE_TAG"
             docker compose -f compose.prod.yml pull
             docker compose -f compose.prod.yml up -d
             sudo systemctl reload nginx || true
