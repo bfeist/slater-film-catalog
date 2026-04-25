@@ -6,10 +6,10 @@ _Drafted April 24, 2026._
 
 The application should be split into two runtime domains:
 
-1. **Production catalog host** for the React app, catalog/search API, SQLite replica, and uploaded PDFs.
-2. **Home video gateway** for the video archive mount and all proxy/transcode streaming.
+1. **Production catalog host** for the React app, catalog/search API, and a SQLite replica.
+2. **Home video gateway** for the video archive mount, the shotlist PDF library, and all proxy/transcode streaming.
 
-This keeps the 80 TB archive at home while moving the browse/search experience onto a public production host.
+This keeps the 80 TB archive and the PDF corpus at home while moving the browse/search experience onto a public production host.
 
 This plan intentionally uses **Home Video Gateway** instead of "service worker" because a browser Service Worker is the wrong primitive here. The required component is a long-running server process or container on the home network that accepts signed stream requests and reads local video files.
 
@@ -469,13 +469,13 @@ Recommended production layout:
 - Host Nginx proxies `/api/*` to the catalog API container bound on localhost.
 - The current Docker `web` container is not used in production.
 - The catalog API container binds only to `127.0.0.1`, for example `127.0.0.1:9311`.
-- SQLite snapshot and PDFs live in host directories mounted read-only into the API container.
+- The SQLite snapshot lives in a host directory mounted read-only into the API container.
+- No PDF directory and no archive mount on production.
 
 Suggested directories:
 
 - `/srv/slater-film-catalog/current/web/`
 - `/srv/slater-film-catalog/shared/catalog.db`
-- `/srv/slater-film-catalog/shared/shotlist_pdfs/`
 - `/srv/slater-film-catalog/shared/env/`
 - `/srv/slater-film-catalog/compose/`
 
@@ -508,11 +508,11 @@ Remove in production:
 
 - `web` container
 - archive share mount
+- PDF directory mount
 
 Keep:
 
 - read-only DB mount
-- read-only PDF mount
 - writable log mount
 
 ### Home
@@ -531,8 +531,10 @@ Keep the archive mount read-only and local to home only.
 GitHub-hosted runners will not have direct access to:
 
 - the home SQLite source snapshot unless you upload it first
-- the shotlist PDF directory unless it is packaged somewhere reachable
 - the local archive share
+- the home shotlist PDF directory
+
+The SQLite snapshot is the only home-resident artifact that needs to land on production. The PDF directory and the archive both stay at home and are accessed at runtime through the home gateway, never through CI.
 
 Because of that, the deployment plan should use a **hybrid pipeline**.
 
@@ -657,7 +659,7 @@ To avoid split-brain behavior:
 - the production API and home gateway should agree on the same release version
 - stream tickets should include a release version claim when practical
 - the home gateway should reject tickets for unknown release versions
-- production deploy should not switch the site live until DB and PDFs for that release are in place
+- production deploy should not switch the site live until the matching `catalog.db` snapshot is in place on production and the home gateway is running the same `RELEASE_VERSION`
 
 ## Operational Plan
 
@@ -665,8 +667,8 @@ To avoid split-brain behavior:
 
 - move SPA static hosting to the production host Nginx
 - run only the catalog API container on production
-- deploy DB snapshot and PDFs to production
-- keep local video streaming available only in the home environment during this phase
+- deploy the DB snapshot to production
+- keep video streaming and PDF serving available locally through the existing Express process during this phase
 
 ### Phase 2. Extract the current `/api/video/*` logic into the home gateway
 
@@ -839,5 +841,6 @@ Mitigation:
 
 1. Add a deployment-oriented architecture diagram to `docs/architecture.md` after this plan is approved.
 2. Implement a release manifest generator for streamable files.
-3. Add a GitHub Actions workflow pair: build-on-GitHub plus deploy-from-home-runner.
-4. Extract `src/server/routes/video.ts` into a dedicated home gateway service.
+3. Add a GitHub Actions workflow set: build-on-GitHub plus deploy-from-home-runner plus home-gateway deploy.
+4. Extract `src/server/routes/video.ts` and `src/server/routes/shotlistPdf.ts` into a dedicated home gateway service.
+5. Use the **Concrete Implementation Checklist** above as the working task list when executing this plan.
