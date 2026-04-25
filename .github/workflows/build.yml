@@ -84,6 +84,7 @@ jobs:
           GHCR_IMAGE: ghcr.io/${{ github.repository }}/catalog-api
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_ACTOR: ${{ github.actor }}
+          PROD_ENV_FILE: ${{ secrets.PROD_ENV_FILE }}
         run: |
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
@@ -93,9 +94,13 @@ jobs:
           rsync -avzO --no-perms --delete -e "ssh -i ~/.ssh/id_deploy" \
             spa-dist/ "$PROD_USER@$PROD_HOST:$PROD_PATH_WEBROOT/"
 
-          # Push compose file to app root
+          # Push compose file and .env.prod to app root
           rsync -avzO --no-perms -e "ssh -i ~/.ssh/id_deploy" \
             compose.prod.yml "$PROD_USER@$PROD_HOST:$PROD_PATH_APPROOT/compose.prod.yml"
+          ssh -i ~/.ssh/id_deploy "$PROD_USER@$PROD_HOST" \
+            "mkdir -p $PROD_PATH_APPROOT/.local/dockerLogs"
+          echo "$PROD_ENV_FILE" | ssh -i ~/.ssh/id_deploy "$PROD_USER@$PROD_HOST" \
+            "cat > $PROD_PATH_APPROOT/.env.prod && chmod 600 $PROD_PATH_APPROOT/.env.prod"
 
           # Pull image, restart compose
           ssh -i ~/.ssh/id_deploy "$PROD_USER@$PROD_HOST" bash -se <<EOF
