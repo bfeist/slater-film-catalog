@@ -32,7 +32,6 @@ uv.lock
 # Environment — local overrides (see .env.example for template)
 .env
 .env.prod
-.env.home
 
 # Docker environment — local overrides (see .env.docker.example for template)
 .env.docker
