@@ -17,12 +17,24 @@ import {
 } from "./tokens.js";
 
 // ---------------------------------------------------------------------------
-// CORS — only allow the configured public origin (production catalog host).
+// CORS — allow one or more configured origins (comma-separated PUBLIC_ORIGIN).
 // Applies to public /stream and /pdf endpoints. /internal/* is server-to-server.
 // ---------------------------------------------------------------------------
+const allowedOrigins: Set<string> = new Set(
+  config.publicOrigin
+    ? config.publicOrigin
+        .split(",")
+        .map((o) => o.trim())
+        .filter(Boolean)
+    : []
+);
+
 function applyCors(req: Request, res: Response, next: NextFunction): void {
-  if (config.publicOrigin) {
-    res.setHeader("Access-Control-Allow-Origin", config.publicOrigin);
+  const requestOrigin = req.headers.origin ?? "";
+  if (allowedOrigins.size > 0) {
+    // Echo back the matched origin so multi-origin configs work correctly.
+    const matched = allowedOrigins.has(requestOrigin) ? requestOrigin : [...allowedOrigins][0];
+    res.setHeader("Access-Control-Allow-Origin", matched);
     res.setHeader("Vary", "Origin");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   }

@@ -4,7 +4,7 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
-import { requestPdfSession } from "../api/client";
+import { requestPdfSession, ApiError } from "../api/client";
 import clsx from "clsx";
 import styles from "./ShotlistPdfViewer.module.css";
 
@@ -90,10 +90,9 @@ export default function ShotlistPdfViewer({
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const msg = err instanceof Error ? err.message : String(err);
         setPdfError(
-          msg.includes("503")
-            ? "PDFs are temporarily unavailable. The video gateway is offline."
+          err instanceof ApiError && err.status === 503
+            ? "PDFs are temporarily unavailable. The home gateway is offline."
             : "Could not load PDF."
         );
       });
@@ -147,17 +146,15 @@ export default function ShotlistPdfViewer({
               </div>
             )}
             {!pdfError && pdfFile && (
-              <div className="muted" style={{ padding: "2rem", textAlign: "center" }}>
-                {pdfError}
-              </div>
-            )}
-            {!pdfError && pdfFile && (
               <Document
                 file={pdfFile}
                 className={styles.document}
                 onLoadSuccess={({ numPages: n }) => {
                   setNumPages(n);
                   setPageNumber(1);
+                }}
+                onLoadError={(err) => {
+                  setPdfError(err.message || "Failed to load PDF.");
                 }}
               >
                 <Page
