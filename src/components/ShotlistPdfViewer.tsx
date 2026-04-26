@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type JSX } from "react";
+import { useState, useEffect, useRef, useCallback, type JSX } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -21,6 +21,51 @@ function getAuthToken(): string {
   } catch {
     return "";
   }
+}
+
+type PdfStage = "requesting_session" | "loading" | "ready" | "error";
+
+const PDF_STAGE_LABELS: Record<PdfStage, string> = {
+  requesting_session: "Requesting PDF session…",
+  loading: "Loading PDF…",
+  ready: "",
+  error: "",
+};
+
+interface PdfError {
+  title: string;
+  detail: string;
+}
+
+function describeApiError(err: unknown): PdfError {
+  if (err instanceof ApiError) {
+    if (err.status === 503) {
+      const reasonLabel: Record<string, string> = {
+        timeout: "Home gateway did not respond in time.",
+        unreachable: "Cannot reach the home gateway from the catalog server.",
+        http_error: `Home gateway returned an error${
+          err.gatewayStatus ? ` (HTTP ${err.gatewayStatus})` : ""
+        }.`,
+        unknown: "Home gateway is unavailable.",
+      };
+      const headline = err.reason
+        ? (reasonLabel[err.reason] ?? reasonLabel.unknown)
+        : reasonLabel.unknown;
+      return {
+        title: "PDFs temporarily unavailable",
+        detail: err.detail ? `${headline} ${err.detail}` : headline,
+      };
+    }
+    if (err.status === 404) {
+      return { title: "PDF not found", detail: err.detail ?? "The requested file is missing." };
+    }
+    if (err.status === 401 || err.status === 403) {
+      return { title: "Not authorized", detail: err.detail ?? "Sign in required to view PDFs." };
+    }
+    return { title: `Server error (${err.status})`, detail: err.detail ?? err.message };
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  return { title: "Could not load PDF", detail: msg };
 }
 
 interface ShotlistPdfViewerProps {
@@ -65,7 +110,12 @@ export default function ShotlistPdfViewer({
     url: string;
     httpHeaders: Record<string, string>;
   } | null>(null);
-  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [pdfStage, setPdfStage] = useState<PdfStage>("requesting_session");
+  const [pdfError, setPdfError] = useState<PdfError | null>(null);
+
+  // retryKey increments to force re-requesting the same activePdf.
+  const [retryKey, setRetryKey] = useState(0);
+  const retry = useCallback(() => setRetryKey((k) => k + 1), []);
 
   useEffect(() => {
     if (!activePdf) {
@@ -75,6 +125,7 @@ export default function ShotlistPdfViewer({
     }
     let cancelled = false;
     setPdfFile(null);
+    setPdfStage("requesting_session");
     setPdfError(null);
     requestPdfSession(activePdf)
       .then((session) => {
@@ -87,19 +138,17 @@ export default function ShotlistPdfViewer({
               ? { Authorization: `Bearer ${authToken}` }
               : {},
         });
+        setPdfStage("loading");
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setPdfError(
-          err instanceof ApiError && err.status === 503
-            ? "PDFs are temporarily unavailable. The home gateway is offline."
-            : "Could not load PDF."
-        );
+        setPdfStage("error");
+        setPdfError(describeApiError(err));
       });
     return () => {
       cancelled = true;
     };
-  }, [activePdf, isAuthed, authToken]);
+  }, [activePdf, isAuthed, authToken, retryKey]);
 
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
@@ -140,21 +189,36 @@ export default function ShotlistPdfViewer({
                 No shotlist PDFs found for {identifier}.
               </div>
             )}
-            {pdfError && (
-              <div className="muted" style={{ padding: "2rem", textAlign: "center" }}>
-                {pdfError}
+            {(pdfStage === "requesting_session" || pdfStage === "loading") && (
+              <div className={styles.pdfStatus} role="status" aria-live="polite">
+                <div className={styles.pdfSpinner} aria-hidden="true" />
+                <div className={styles.pdfStatusText}>{PDF_STAGE_LABELS[pdfStage]}</div>
               </div>
             )}
-            {!pdfError && pdfFile && (
+            {pdfStage === "error" && pdfError && (
+              <div className={styles.pdfStatus} role="alert">
+                <div className={styles.pdfErrorTitle}>{pdfError.title}</div>
+                <div className={styles.pdfErrorDetail}>{pdfError.detail}</div>
+                <button className={styles.pdfRetryBtn} onClick={retry}>
+                  Retry
+                </button>
+              </div>
+            )}
+            {pdfStage !== "error" && pdfFile && (
               <Document
                 file={pdfFile}
                 className={styles.document}
                 onLoadSuccess={({ numPages: n }) => {
                   setNumPages(n);
                   setPageNumber(1);
+                  setPdfStage("ready");
                 }}
                 onLoadError={(err) => {
-                  setPdfError(err.message || "Failed to load PDF.");
+                  setPdfStage("error");
+                  setPdfError({
+                    title: "Failed to render PDF",
+                    detail: err.message || "pdf.js could not parse the document.",
+                  });
                 }}
               >
                 <Page
