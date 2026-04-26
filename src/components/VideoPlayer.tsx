@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from "react";
-import { requestVideoSession, videoHeartbeat, videoStop } from "../api/client";
+import { ApiError, requestVideoSession, videoHeartbeat, videoStop } from "../api/client";
 import { formatDuration } from "../utils/format";
 import styles from "./VideoPlayer.module.css";
 
@@ -16,6 +16,91 @@ interface StreamKey {
   offset: number;
   id: string;
 }
+
+/**
+ * Coarse playback lifecycle for the busy/error overlay.
+ *  - requesting_session: POST /api/video/sessions in flight
+ *  - connecting: session resolved, <video> element loading metadata
+ *  - buffering: video stalled / waiting after start (ffmpeg still spinning up)
+ *  - ready: media is currently playing or paused with frames available
+ *  - error: terminal failure (session mint failed or media element error)
+ */
+type Stage = "requesting_session" | "connecting" | "buffering" | "ready" | "error";
+
+interface StageError {
+  title: string;
+  detail: string;
+  /** Optional retry handler — when present the overlay shows a Retry button. */
+  retry?: () => void;
+}
+
+function describeApiError(err: unknown): { title: string; detail: string } {
+  if (err instanceof ApiError) {
+    if (err.status === 503) {
+      const reasonLabel: Record<string, string> = {
+        timeout: "Video gateway did not respond in time.",
+        unreachable: "Cannot reach the video gateway from the catalog server.",
+        http_error: `Video gateway returned an error${err.gatewayStatus ? ` (HTTP ${err.gatewayStatus})` : ""}.`,
+        unknown: "Video gateway is unavailable.",
+      };
+      const headline = err.reason ? reasonLabel[err.reason] : "Video gateway is unavailable.";
+      return {
+        title: "Video streaming unavailable",
+        detail: err.detail ? `${headline} ${err.detail}` : headline,
+      };
+    }
+    if (err.status === 404) {
+      return { title: "File not found", detail: err.detail ?? "The requested file is missing." };
+    }
+    if (err.status === 401 || err.status === 403) {
+      return { title: "Not authorized", detail: err.detail ?? "Sign in required for playback." };
+    }
+    return {
+      title: `Server error (${err.status})`,
+      detail: err.detail ?? err.message,
+    };
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  return { title: "Could not start playback", detail: msg };
+}
+
+function describeMediaError(el: HTMLVideoElement): { title: string; detail: string } {
+  const e = el.error;
+  if (!e) return { title: "Playback error", detail: "Unknown media error." };
+  switch (e.code) {
+    case 1:
+      return { title: "Playback aborted", detail: "The download was cancelled." };
+    case 2:
+      return {
+        title: "Network error during playback",
+        detail:
+          "The connection to the video gateway dropped while streaming. Check that the gateway is online.",
+      };
+    case 3:
+      return {
+        title: "Decode error",
+        detail:
+          "The browser could not decode the transcoded stream. The source file may be corrupt or unsupported.",
+      };
+    case 4:
+      return {
+        title: "Stream not supported",
+        detail:
+          e.message ||
+          "The video gateway is not serving a playable stream. ffmpeg may have failed on the server.",
+      };
+    default:
+      return { title: "Playback error", detail: e.message || `Media error code ${e.code}` };
+  }
+}
+
+const STAGE_LABELS: Record<Stage, string> = {
+  requesting_session: "Requesting playback session…",
+  connecting: "Connecting to video gateway…",
+  buffering: "Buffering — transcoding from new position…",
+  ready: "",
+  error: "",
+};
 
 export default function VideoPlayer({
   fileId,
@@ -45,33 +130,38 @@ export default function VideoPlayer({
   const currentTime = streamKey.offset + videoTime;
 
   // Resolved stream URL for the current streamKey; null while the session is
-  // being requested or if it failed (split mode + home gateway down).
+  // being requested or if it failed (split mode + video gateway down).
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
-  const [streamError, setStreamError] = useState<string | null>(null);
+  const [stage, setStage] = useState<Stage>("requesting_session");
+  const [stageError, setStageError] = useState<StageError | null>(null);
+
+  // Force re-fetching a session (used by the Retry button after errors).
+  const retrySession = useCallback(() => {
+    setStreamKey({ offset: streamKey.offset, id: crypto.randomUUID() });
+  }, [streamKey.offset]);
 
   // Fetch a session URL whenever the streamKey changes (initial mount or seek).
   useEffect(() => {
     let cancelled = false;
     setStreamUrl(null);
-    setStreamError(null);
+    setStage("requesting_session");
+    setStageError(null);
     requestVideoSession(fileId, streamKey.offset, streamKey.id)
       .then((session) => {
         if (cancelled) return;
         setStreamUrl(session.streamUrl);
+        setStage("connecting");
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const msg = err instanceof Error ? err.message : String(err);
-        setStreamError(
-          msg.includes("503")
-            ? "Video streaming is temporarily unavailable. The home gateway is offline."
-            : "Could not start playback."
-        );
+        const { title, detail } = describeApiError(err);
+        setStage("error");
+        setStageError({ title, detail, retry: retrySession });
       });
     return () => {
       cancelled = true;
     };
-  }, [fileId, streamKey]);
+  }, [fileId, streamKey, retrySession]);
 
   // Update videoTime from the <video> element's timeupdate event
   useEffect(() => {
@@ -81,6 +171,43 @@ export default function VideoPlayer({
     vid.addEventListener("timeupdate", onTimeUpdate);
     return () => vid.removeEventListener("timeupdate", onTimeUpdate);
   }, []);
+
+  // Wire up media-element lifecycle events so the overlay reflects buffering /
+  // playing / decode failures rather than just a frozen UI.
+  useEffect(() => {
+    const vid = videoRef.current;
+    if (!vid || !streamUrl) return;
+    const onWaiting = () => setStage((s) => (s === "error" ? s : "buffering"));
+    const onPlaying = () => {
+      setStage("ready");
+      setIsPlaying(true);
+    };
+    const onCanPlay = () => setStage((s) => (s === "error" ? s : "ready"));
+    const onPause = () => setIsPlaying(false);
+    const onPlay = () => setIsPlaying(true);
+    const onStalled = () => setStage((s) => (s === "error" ? s : "buffering"));
+    const onError = () => {
+      const { title, detail } = describeMediaError(vid);
+      setStage("error");
+      setStageError({ title, detail, retry: retrySession });
+    };
+    vid.addEventListener("waiting", onWaiting);
+    vid.addEventListener("playing", onPlaying);
+    vid.addEventListener("canplay", onCanPlay);
+    vid.addEventListener("pause", onPause);
+    vid.addEventListener("play", onPlay);
+    vid.addEventListener("stalled", onStalled);
+    vid.addEventListener("error", onError);
+    return () => {
+      vid.removeEventListener("waiting", onWaiting);
+      vid.removeEventListener("playing", onPlaying);
+      vid.removeEventListener("canplay", onCanPlay);
+      vid.removeEventListener("pause", onPause);
+      vid.removeEventListener("play", onPlay);
+      vid.removeEventListener("stalled", onStalled);
+      vid.removeEventListener("error", onError);
+    };
+  }, [streamUrl, retrySession]);
 
   // When the stream key changes (seek or initial mount), reset videoTime and reload.
   // Cleanup sends an explicit stop so the previous ffmpeg is killed immediately
@@ -96,7 +223,7 @@ export default function VideoPlayer({
   }, [streamKey]);
 
   // Heartbeat — keeps the server-side watchdog alive while the player is open.
-  // In split mode this hits the home gateway directly; in monolithic mode it
+  // In split mode this hits the video gateway directly; in monolithic mode it
   // hits same-origin Express. Both are derived from streamUrl.
   useEffect(() => {
     const { id } = streamKey;
@@ -221,6 +348,9 @@ export default function VideoPlayer({
   const displayTime = dragTime !== null ? dragTime : currentTime;
   const progressFraction = duration > 0 ? Math.min(1, displayTime / duration) : 0;
 
+  const showBusy =
+    stage === "requesting_session" || stage === "connecting" || stage === "buffering";
+
   return (
     <div className={styles.overlay}>
       <div className={styles.container}>
@@ -230,12 +360,7 @@ export default function VideoPlayer({
         </div>
 
         <div className={styles.videoWrapper}>
-          {streamError && (
-            <div className="muted" style={{ padding: "2rem", textAlign: "center" }}>
-              {streamError}
-            </div>
-          )}
-          {!streamError && streamUrl && (
+          {streamUrl && (
             <video
               ref={videoRef}
               autoPlay
@@ -245,6 +370,25 @@ export default function VideoPlayer({
             >
               <track kind="captions" />
             </video>
+          )}
+
+          {showBusy && (
+            <div className={styles.statusOverlay} role="status" aria-live="polite">
+              <div className={styles.spinner} aria-hidden="true" />
+              <div className={styles.statusText}>{STAGE_LABELS[stage]}</div>
+            </div>
+          )}
+
+          {stage === "error" && stageError && (
+            <div className={styles.statusOverlay} role="alert">
+              <div className={styles.errorTitle}>{stageError.title}</div>
+              <div className={styles.errorDetail}>{stageError.detail}</div>
+              {stageError.retry && (
+                <button className={styles.retryBtn} onClick={stageError.retry}>
+                  Retry
+                </button>
+              )}
+            </div>
           )}
         </div>
 

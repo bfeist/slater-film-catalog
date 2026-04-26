@@ -25,6 +25,24 @@ export interface GatewayHealth {
   ok: boolean;
   releaseVersion: string | null;
   checkedAtMs: number;
+  /** Why the gateway is unhealthy (when ok=false). */
+  reason?: "timeout" | "unreachable" | "http_error" | null;
+  /** HTTP status if the gateway responded with non-2xx. */
+  status?: number | null;
+  /** Free-form detail from the gateway response or fetch error. */
+  detail?: string | null;
+}
+
+/** Structured error thrown by mintVideoSession / renewVideoSession / mintPdfToken. */
+export class GatewayError extends Error {
+  constructor(
+    public readonly reason: "timeout" | "unreachable" | "http_error",
+    public readonly status: number | null,
+    public readonly detail: string
+  ) {
+    super(`gateway ${reason}${status ? " " + status : ""}: ${detail}`);
+    this.name = "GatewayError";
+  }
 }
 
 let cachedHealth: GatewayHealth | null = null;
@@ -71,7 +89,15 @@ export async function checkGatewayHealth(force = false): Promise<GatewayHealth> 
   try {
     const r = await gatewayFetch("/healthz");
     if (!r.ok) {
-      cachedHealth = { ok: false, releaseVersion: null, checkedAtMs: now };
+      const body = await r.text().catch(() => "");
+      cachedHealth = {
+        ok: false,
+        releaseVersion: null,
+        checkedAtMs: now,
+        reason: "http_error",
+        status: r.status,
+        detail: body.slice(0, 200) || `HTTP ${r.status}`,
+      };
     } else {
       const body = (await r.json()) as { releaseVersion?: string };
       cachedHealth = {
@@ -81,12 +107,39 @@ export async function checkGatewayHealth(force = false): Promise<GatewayHealth> 
       };
     }
   } catch (err) {
-    ConsoleLogger.warn(
-      `[gateway] /healthz failed: ${err instanceof Error ? err.message : String(err)}`
-    );
-    cachedHealth = { ok: false, releaseVersion: null, checkedAtMs: now };
+    const msg = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === "AbortError";
+    ConsoleLogger.warn(`[gateway] /healthz failed: ${msg}`);
+    cachedHealth = {
+      ok: false,
+      releaseVersion: null,
+      checkedAtMs: now,
+      reason: isTimeout ? "timeout" : "unreachable",
+      status: null,
+      detail: isTimeout ? "Gateway did not respond within 5 seconds" : msg,
+    };
   }
   return cachedHealth;
+}
+
+async function callMint<T>(pathname: string, body: unknown): Promise<T> {
+  let r: Response;
+  try {
+    r = await gatewayFetch(pathname, { method: "POST", body: JSON.stringify(body) });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === "AbortError";
+    throw new GatewayError(
+      isTimeout ? "timeout" : "unreachable",
+      null,
+      isTimeout ? "Gateway did not respond within 5 seconds" : msg
+    );
+  }
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new GatewayError("http_error", r.status, text.slice(0, 300) || `HTTP ${r.status}`);
+  }
+  return (await r.json()) as T;
 }
 
 export async function mintVideoSession(opts: {
@@ -94,14 +147,7 @@ export async function mintVideoSession(opts: {
   startSecs: number;
   username: string;
 }): Promise<VideoSessionResponse> {
-  const r = await gatewayFetch("/internal/sessions", {
-    method: "POST",
-    body: JSON.stringify(opts),
-  });
-  if (!r.ok) {
-    throw new Error(`gateway /internal/sessions: ${r.status}`);
-  }
-  return (await r.json()) as VideoSessionResponse;
+  return callMint<VideoSessionResponse>("/internal/sessions", opts);
 }
 
 export async function renewVideoSession(opts: {
@@ -109,26 +155,15 @@ export async function renewVideoSession(opts: {
   startSecs: number;
   username: string;
 }): Promise<VideoSessionResponse> {
-  const r = await gatewayFetch(`/internal/sessions/${encodeURIComponent(opts.sessionId)}/renew`, {
-    method: "POST",
-    body: JSON.stringify({ startSecs: opts.startSecs, username: opts.username }),
-  });
-  if (!r.ok) {
-    throw new Error(`gateway /internal/sessions/renew: ${r.status}`);
-  }
-  return (await r.json()) as VideoSessionResponse;
+  return callMint<VideoSessionResponse>(
+    `/internal/sessions/${encodeURIComponent(opts.sessionId)}/renew`,
+    { startSecs: opts.startSecs, username: opts.username }
+  );
 }
 
 export async function mintPdfToken(opts: {
   filename: string;
   username: string;
 }): Promise<PdfTokenResponse> {
-  const r = await gatewayFetch("/internal/pdf-tokens", {
-    method: "POST",
-    body: JSON.stringify(opts),
-  });
-  if (!r.ok) {
-    throw new Error(`gateway /internal/pdf-tokens: ${r.status}`);
-  }
-  return (await r.json()) as PdfTokenResponse;
+  return callMint<PdfTokenResponse>("/internal/pdf-tokens", opts);
 }

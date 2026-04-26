@@ -93,7 +93,7 @@ export default function ShotlistPdfViewer({
         const msg = err instanceof Error ? err.message : String(err);
         setPdfError(
           msg.includes("503")
-            ? "PDFs are temporarily unavailable. The home gateway is offline."
+            ? "PDFs are temporarily unavailable. The video gateway is offline."
             : "Could not load PDF."
         );
       });

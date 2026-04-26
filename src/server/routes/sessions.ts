@@ -22,6 +22,7 @@ import {
   mintVideoSession,
   renewVideoSession,
   mintPdfToken,
+  GatewayError,
 } from "../gatewayClient.js";
 import { ConsoleLogger } from "../logger.js";
 
@@ -32,6 +33,26 @@ interface VideoSessionPayload {
   sessionId: string;
   expiresAtMs: number | null;
   mode: "monolithic" | "split";
+}
+
+/** Map a GatewayError or unhealthy GatewayHealth into a client-facing payload. */
+function gatewayErrorPayload(
+  resource: "video" | "pdf",
+  reason: "timeout" | "unreachable" | "http_error",
+  status: number | null,
+  detail: string | null
+): { error: string; reason: string; detail: string; gatewayStatus: number | null } {
+  const messages: Record<typeof reason, string> = {
+    timeout: `The home gateway did not respond in time. ${resource === "video" ? "Video streaming" : "PDF download"} is unavailable right now.`,
+    unreachable: `Could not reach the home gateway. ${resource === "video" ? "Video streaming" : "PDF download"} is offline.`,
+    http_error: `The home gateway rejected the ${resource} request${status ? ` (HTTP ${status})` : ""}.`,
+  };
+  return {
+    error: resource === "video" ? "streaming_unavailable" : "pdfs_unavailable",
+    reason,
+    detail: detail ?? messages[reason],
+    gatewayStatus: status,
+  };
 }
 
 function buildLocalStreamUrl(fileId: number, streamId: string, startSecs: number): string {
@@ -77,7 +98,16 @@ router.post("/video/sessions", async (req, res) => {
   // catalog (split) mode
   const health = await checkGatewayHealth();
   if (!health.ok) {
-    res.status(503).json({ error: "streaming_unavailable" });
+    res
+      .status(503)
+      .json(
+        gatewayErrorPayload(
+          "video",
+          health.reason ?? "unreachable",
+          health.status ?? null,
+          health.detail ?? null
+        )
+      );
     return;
   }
   try {
@@ -94,7 +124,15 @@ router.post("/video/sessions", async (req, res) => {
     ConsoleLogger.warn(
       `[sessions] mint video session failed: ${err instanceof Error ? err.message : String(err)}`
     );
-    res.status(503).json({ error: "streaming_unavailable" });
+    if (err instanceof GatewayError) {
+      res.status(503).json(gatewayErrorPayload("video", err.reason, err.status, err.detail));
+    } else {
+      res.status(503).json({
+        error: "streaming_unavailable",
+        reason: "unknown",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 });
 
@@ -124,7 +162,16 @@ router.post("/video/sessions/:id/renew", async (req, res) => {
 
   const health = await checkGatewayHealth();
   if (!health.ok) {
-    res.status(503).json({ error: "streaming_unavailable" });
+    res
+      .status(503)
+      .json(
+        gatewayErrorPayload(
+          "video",
+          health.reason ?? "unreachable",
+          health.status ?? null,
+          health.detail ?? null
+        )
+      );
     return;
   }
   try {
@@ -141,7 +188,15 @@ router.post("/video/sessions/:id/renew", async (req, res) => {
     ConsoleLogger.warn(
       `[sessions] renew video session failed: ${err instanceof Error ? err.message : String(err)}`
     );
-    res.status(503).json({ error: "streaming_unavailable" });
+    if (err instanceof GatewayError) {
+      res.status(503).json(gatewayErrorPayload("video", err.reason, err.status, err.detail));
+    } else {
+      res.status(503).json({
+        error: "streaming_unavailable",
+        reason: "unknown",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 });
 
@@ -178,7 +233,16 @@ router.post("/pdf/sessions", async (req, res) => {
 
   const health = await checkGatewayHealth();
   if (!health.ok) {
-    res.status(503).json({ error: "pdfs_unavailable" });
+    res
+      .status(503)
+      .json(
+        gatewayErrorPayload(
+          "pdf",
+          health.reason ?? "unreachable",
+          health.status ?? null,
+          health.detail ?? null
+        )
+      );
     return;
   }
   try {
@@ -192,7 +256,15 @@ router.post("/pdf/sessions", async (req, res) => {
     ConsoleLogger.warn(
       `[sessions] mint pdf token failed: ${err instanceof Error ? err.message : String(err)}`
     );
-    res.status(503).json({ error: "pdfs_unavailable" });
+    if (err instanceof GatewayError) {
+      res.status(503).json(gatewayErrorPayload("pdf", err.reason, err.status, err.detail));
+    } else {
+      res.status(503).json({
+        error: "pdfs_unavailable",
+        reason: "unknown",
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 });
 

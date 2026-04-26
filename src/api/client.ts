@@ -12,6 +12,56 @@ import type {
 
 const BASE = "/api";
 
+/**
+ * Structured API error. Server JSON bodies of the form
+ * `{ error, reason?, detail?, gatewayStatus? }` populate the fields below;
+ * plain-text bodies fall back to `detail` only.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  readonly reason: string | null;
+  readonly detail: string | null;
+  readonly gatewayStatus: number | null;
+  constructor(opts: {
+    status: number;
+    code?: string | null;
+    reason?: string | null;
+    detail?: string | null;
+    gatewayStatus?: number | null;
+    message?: string;
+  }) {
+    super(opts.message ?? opts.detail ?? opts.code ?? `API ${opts.status}`);
+    this.name = "ApiError";
+    this.status = opts.status;
+    this.code = opts.code ?? null;
+    this.reason = opts.reason ?? null;
+    this.detail = opts.detail ?? null;
+    this.gatewayStatus = opts.gatewayStatus ?? null;
+  }
+}
+
+async function readError(res: Response): Promise<ApiError> {
+  const text = await res.text().catch(() => "");
+  try {
+    const parsed = JSON.parse(text) as {
+      error?: string;
+      reason?: string;
+      detail?: string;
+      gatewayStatus?: number;
+    };
+    return new ApiError({
+      status: res.status,
+      code: parsed.error ?? null,
+      reason: parsed.reason ?? null,
+      detail: parsed.detail ?? null,
+      gatewayStatus: parsed.gatewayStatus ?? null,
+    });
+  } catch {
+    return new ApiError({ status: res.status, detail: text || `API ${res.status}` });
+  }
+}
+
 /** Return auth header if a session token is stored. */
 function authHeaders(): Record<string, string> {
   try {
@@ -25,10 +75,7 @@ function authHeaders(): Record<string, string> {
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API ${res.status}: ${body}`);
-  }
+  if (!res.ok) throw await readError(res);
   return res.json() as Promise<T>;
 }
 
@@ -105,10 +152,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`API ${res.status}: ${text}`);
-  }
+  if (!res.ok) throw await readError(res);
   return res.json() as Promise<T>;
 }
 
