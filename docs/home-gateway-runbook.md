@@ -37,7 +37,8 @@ Edit [.env.home](../.env.home.example) and set:
 - `HOME_GATEWAY_SHARED_SECRET` — any random value; must match the catalog's value below.
 - `SLATER_SECRET` — same value as your main `.env` so DB HMACs validate.
 - `PUBLIC_ORIGIN=http://localhost:9300` — Vite's origin (the only origin the browser sees).
-- `NAS_HOST`, `NAS_USER`, `NAS_PASS`, `NAS_SHARE` — SMB credentials for the archive (compose mounts `//$NAS_HOST/$NAS_SHARE` read-only).
+- `NAS_HOST` — NAS address used for the read-only NFS archive mount.
+- `NFS_EXPORT_PATH` — exported NFS path (defaults to `/mnt/user/NASA Archive`).
 
 Add the matching catalog-side env to your main `.env`:
 
@@ -105,8 +106,7 @@ Use the same value in both `.env.prod` (production catalog) and `.env.home` (hom
   - `HOME_GATEWAY_SHARED_SECRET` — same as prod.
   - `SLATER_SECRET` — same as prod.
   - `PUBLIC_ORIGIN` — production site URL (e.g. `https://slaterfilmcatalog.benfeist.com`).
-  - `NAS_HOST`, `NAS_USER`, `NAS_PASS`, `NAS_SHARE` — CIFS credentials.
-  - `NAS_HOST`, `NAS_USER`, `NAS_PASS`, `NAS_SHARE` are read by [compose.home.yml](../compose.home.yml) to mount the archive via the Docker CIFS volume driver.
+  - `NAS_HOST` and optional `NFS_EXPORT_PATH` are read by [compose.home.yml](../compose.home.yml) to mount the archive read-only over NFS.
 - Make sure `database/catalog.db` and `static_assets/shotlist_pdfs/` are present.
 - First boot:
   ```bash

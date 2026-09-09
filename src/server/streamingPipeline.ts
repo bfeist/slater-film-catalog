@@ -185,7 +185,7 @@ export interface StreamFailure {
  * descriptor when the request can't even start (file missing, etc).
  */
 export function streamFile(
-  req: { on(event: "close", cb: () => void): unknown },
+  _req: { on(event: "close", cb: () => void): unknown },
   res: Response,
   opts: StreamRequest
 ): StreamFailure | null {
@@ -232,7 +232,9 @@ export function streamFile(
     "Cache-Control": "no-cache",
   });
 
-  const fontEscaped = config.watermarkMonoFontPath.replace(/:/g, "\\:");
+  // ffmpeg's filter parser treats Windows backslashes as escapes. Normalize
+  // to forward slashes before escaping the drive-letter colon.
+  const fontEscaped = config.watermarkMonoFontPath.replace(/\\/g, "/").replace(/:/g, "\\:");
   let fps = 0;
   if (probe?.video_frame_rate) {
     const parts = probe.video_frame_rate.split("/");
@@ -277,6 +279,12 @@ export function streamFile(
   if (effectiveStartSecs > 0) ffmpegArgs.push("-ss", String(effectiveStartSecs));
   ffmpegArgs.push("-i", fullPath);
 
+  // Fragmented MP4 only flushes a playable fragment at a keyframe. Keep the
+  // GOP to roughly one second so expensive sources (for example 4K ProRes
+  // decoded well below realtime) do not leave the player waiting for the
+  // encoder's much longer default GOP before receiving media bytes.
+  const gopSize = Math.max(1, Math.round(fps));
+
   const ffmpeg: ChildProcess = spawn("ffmpeg", [
     ...ffmpegArgs,
     "-map",
@@ -289,6 +297,8 @@ export function streamFile(
     config.videoEncoder,
     "-preset",
     "fast",
+    "-g",
+    String(gopSize),
     "-c:a",
     "aac",
     "-ac",
@@ -364,6 +374,11 @@ export function streamFile(
     }
   });
 
-  req.on("close", () => cleanup("client disconnected"));
+  // IncomingMessage "close" means the request side has completed/closed and
+  // can fire immediately after a normal GET on Windows. The streamed response
+  // is the connection whose premature close means the viewer disconnected.
+  res.on("close", () => {
+    if (!res.writableEnded) cleanup("client disconnected");
+  });
   return null;
 }

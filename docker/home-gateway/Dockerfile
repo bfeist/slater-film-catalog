@@ -7,9 +7,9 @@
 # =============================================================================
 
 # ---- Stage 1: Build --------------------------------------------------------
-# Use Debian (bookworm-slim) so better-sqlite3's native addon links against
+# Use Debian (trixie-slim) so better-sqlite3's native addon links against
 # glibc — matching the runtime stage below.
-FROM node:22-bookworm-slim AS builder
+FROM node:22-trixie-slim AS builder
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -24,12 +24,12 @@ COPY . .
 # Builds both api.js and gateway.js into .local/express/dist/
 RUN npm run api:build
 
-# ---- Stage 2: Runtime (Debian bookworm-slim) --------------------------------
+# ---- Stage 2: Runtime (Debian trixie-slim) ----------------------------------
 # Debian's ffmpeg package includes h264_nvenc / hevc_nvenc via FFnvcodec
 # (dlopen-based; libnvidia-encode.so.1 is injected at runtime by the NVIDIA
 # Container Toolkit). better-sqlite3 was compiled above against glibc so it
 # runs correctly here.
-FROM node:22-bookworm-slim
+FROM node:22-trixie-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

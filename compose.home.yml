@@ -2,8 +2,8 @@
 # Slater Film Catalog — Home Video Gateway stack
 #
 # Single file for both local dev and production. The NASA archive is mounted
-# directly from the SMB share (\\NAS_HOST\NAS_SHARE) via the Docker CIFS
-# volume driver — no separate bind-mount override needed.
+# directly from the NAS via a read-only NFS volume. NFS avoids the severe
+# throughput penalty of Docker Desktop's Linux CIFS client.
 #
 # Usage:
 #   docker compose -f compose.home.yml --env-file .env.home up -d --build
@@ -39,9 +39,9 @@ services:
       - ./static_assets/shotlist_pdfs:/app/static_assets/shotlist_pdfs:ro
       # Activity logs
       - ./.local/gatewayLogs:/app/logs
-      # NASA video archive — same CIFS volume as the legacy compose
+      # NASA video archive — tuned NFSv3 mount for Docker Desktop throughput
       - type: volume
-        source: nasa-archive
+        source: nasa-archive-nfs
         target: /archive
         read_only: true
         volume:
@@ -86,10 +86,9 @@ networks:
     driver: bridge
 
 volumes:
-  nasa-archive:
+  nasa-archive-nfs:
     driver: local
     driver_opts:
-      type: cifs
-      # username/password can be empty for guest/open shares
-      o: "addr=${NAS_HOST},vers=3.0,ro,username=${NAS_USER:-guest},password=${NAS_PASS:-},noperm,file_mode=0444,dir_mode=0555"
-      device: "//${NAS_HOST}/${NAS_SHARE}"
+      type: nfs
+      o: "addr=${NAS_HOST},nfsvers=3,ro,nolock,soft,timeo=50,retrans=2,rsize=1048576,nconnect=8"
+      device: ":${NFS_EXPORT_PATH:-/mnt/user/NASA Archive}"
